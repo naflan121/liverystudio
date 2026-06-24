@@ -1,0 +1,27 @@
+{
+  "name": "livery-lab",
+  "version": "0.1.0",
+  "description": "Self-learning desktop prompt lab for RC scale-model aircraft videos (Seedance 2.0) — Sholacase",
+  "author": "Sholacase",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "package:win": "electron-vite build && electron-packager . \"Livery Lab\" --platform=win32 --arch=x64 --out=release --overwrite --app-version=0.1.0 --ignore=\"(^/src|^/release|\\.md$|electron-builder\\.yml|tsconfig|electron\\.vite)\""
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@electron/packager": "^20.0.1",
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.17",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^33.2.1",
+    "electron-vite": "^2.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11"
+  }
+}

@@ -1,0 +1,68 @@
+import type { Scenario } from './types'
+
+export const REACH = [
+  { id: 'flop', label: 'Flopped', color: '#B23A2E' },
+  { id: 'normal', label: 'Normal', color: '#6B6862' },
+  { id: 'good', label: 'Good reach', color: '#1F7A4D' },
+  { id: 'viral', label: 'Went viral', color: '#B8389E' },
+] as const
+
+export const ILLUSION_TAGS = [
+  'Scale drifted to full-size',
+  'CGI / AI sheen',
+  'Wrong engine sound',
+  'Floaty / kite physics',
+  'Toy-like',
+  'Other',
+]
+
+export const AIRCRAFT = [
+  { id: 'auto', label: 'Let Claude decide' },
+  { id: 'placeholder', label: '[MODEL NAME] placeholder' },
+  { id: 'commercial', label: 'Claude picks: commercial airliner' },
+  { id: 'military', label: 'Claude picks: military' },
+  { id: 'vintage', label: 'Claude picks: vintage / warbird' },
+  { id: 'surprise', label: 'Claude picks: surprise me' },
+]
+
+export const CROWD = [
+  { id: 'auto', label: 'Let Claude decide' },
+  { id: 'solo', label: 'Solo / quiet field' },
+  { id: 'busy', label: 'Busy flightline' },
+  { id: 'packed', label: 'Packed airshow' },
+]
+
+export const ENV = [
+  { id: 'auto', label: 'Let Claude decide', desc: '' },
+  { id: 'grass', label: 'Grass flying field (farmland)', desc: 'a real RC grass flying field: a mown grass strip with visible mowing lines, patches of longer uncut grass and a standing crop edge (maize or wheat) bordering it, gently rolling farmland behind, hedgerows and tree lines, the odd barn or shed, bright clear summer light. No paved runway.' },
+  { id: 'tarmac', label: 'Tarmac strip / club field', desc: 'a small club airfield with a narrow paved tarmac strip, a dashed centreline and orange cones, grass verges, a clubhouse and low fencing.' },
+  { id: 'coastal', label: 'Coastal / waterside', desc: 'a coastal or lakeside setting — open water, a shoreline of grass or sand, big open sky and distant low hills.' },
+  { id: 'desert', label: 'Desert / dry lakebed', desc: 'an arid dry-lakebed or desert strip — cracked pale ground, sparse scrub, shimmering heat haze and a wide empty horizon.' },
+  { id: 'mountain', label: 'Mountain field', desc: 'an alpine mountain-meadow strip with dramatic peaks and pine slopes behind and crisp clear air.' },
+]
+
+export const SCENARIOS: Scenario[] = [
+  { id: 'random', label: 'Random (pick one for me)', group: '', brief: '' },
+  { id: 'runway_takeoff', label: 'Runway takeoff', group: 'Flight', brief: 'A single-clip runway takeoff showing the full takeoff run up to V1 and rotation. Filmed side-on at eye level from behind the barrier, the RC pilot (a figure in FPV goggles working an RC transmitter) clearly visible in the near foreground throughout. The model travels one fixed direction the whole clip; the camera pans to follow. The clip is almost entirely the GROUND RUN: the model starts its roll and accelerates down a long stretch of the strip in real time — wheels rolling, tail low, nose gear compressed, speed building in stages (a rolling start, gathering speed across the mid-strip, then approaching V1) while small rudder twitches hold the centreline. It reaches V1 and rotates only in the final moment, the nose lifting and the main wheels just breaking contact as the clip ends. Do not show a climb or any altitude gain — the clip ends right at liftoff. The run must dominate; no early rotation, no short ground roll.' },
+  { id: 'landing', label: 'Landing', group: 'Flight', brief: 'A landing: real approach, nose-up flare, wheel chirp, a small bounce, then rollout. Never a vertical descent.' },
+  { id: 'touch_and_go', label: 'Touch-and-go', group: 'Flight', brief: 'A touch-and-go: brief main-wheel contact and chirp, then power back on and climb away in the same direction.' },
+  { id: 'low_pass', label: 'Low pass / high-speed flyby', group: 'Flight', brief: 'A fast, flat low pass close to the crowd, motor screaming, prop fluttering, spectators flinching and tracking it.' },
+  { id: 'taxi', label: 'Taxi to the runway', group: 'Flight', brief: 'A ground taxi: weaving slightly, props idling, airframe bobbing over seams, holding short near the crowd line.' },
+  { id: 'airshow_flyby', label: 'Airshow crowd flyby', group: 'Flight', brief: 'A busy airshow with grandstands; a single pass with the whole crowd in frame for scale.' },
+  { id: 'formation', label: 'Formation / multi-plane pass', group: 'Flight', brief: 'Two or three models in tight formation on a single pass, holding spacing, all moving the same direction.' },
+  { id: 'aerobatic', label: 'Aerobatic display', group: 'Flight', brief: 'An aerobatic pass — a roll or wingover — kept within believable RC energy, with wing rock and trim wobble.' },
+  { id: 'warbird', label: 'Vintage warbird display', group: 'Flight', brief: 'A vintage warbird display pass, classic livery, weathered panels, period airfield setting.' },
+  { id: 'water_takeoff', label: 'Water takeoff (seaplane)', group: 'Water', brief: 'A floatplane water takeoff: taxi cutting a V-wake, spray off the hull, lift-off with droplets trailing the floats.' },
+  { id: 'water_landing', label: 'Water landing (seaplane)', group: 'Water', brief: 'A floatplane water landing: shallow approach, floats contacting with weight, fan of spray, planing taxi.' },
+  { id: 'belly_landing', label: 'Gear-up belly landing (incident)', group: 'Incident', brief: 'A gear-up belly landing: low approach, fuselage skidding with a scrape and dust, emergency crews near.' },
+  { id: 'ground_mishap', label: 'Ground mishap / abort', group: 'Incident', brief: 'A harmless ground mishap: an aborted takeoff or a nose-over on landing, model intact, crowd reacting. No gore.' },
+  { id: 'boneyard', label: 'Boneyard dismantling timelapse', group: 'Ground', brief: 'A documentary boneyard part-out timelapse of a parked airframe. No flight, but every scale, anti-AI, audio, and Negative rule still applies; the illusion is a tiny model reading as a real scrapped airliner.' },
+  { id: 'assembly', label: 'Scale model assembly POV', group: 'Ground', brief: 'A first-person workshop build / factory-style assembly timelapse. No flight maneuvers — focus on hands, parts, and scale realism.' },
+]
+
+export function groupScenarios(): [string, Scenario[]][] {
+  const order = ['', 'Flight', 'Water', 'Incident', 'Ground']
+  const map: Record<string, Scenario[]> = {}
+  SCENARIOS.forEach((s) => { (map[s.group] = map[s.group] || []).push(s) })
+  return order.filter((g) => map[g]).map((g) => [g, map[g]] as [string, Scenario[]])
+}
