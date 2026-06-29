@@ -124,7 +124,10 @@ export function App() {
   const [explore, setExplore] = useState(45)
 
   const [loading, setLoading] = useState(false)
-  const [learning, setLearning] = useState(false)
+  // How many learn tasks are running in the background (a counter, not a flag,
+  // so overlapping submits don't switch the indicator off too early).
+  const [learnCount, setLearnCount] = useState(0)
+  const learning = learnCount > 0
   const [error, setError] = useState('')
   const [current, setCurrent] = useState<Entry | null>(null)
   const [pickedTags, setPickedTags] = useState<string[]>([])
@@ -180,16 +183,20 @@ export function App() {
     all: history.length,
   }
 
+  // Runs the learn step in the background — the caller does NOT await this, so
+  // the user can keep scoring, opening entries, or generating while the playbook
+  // distils. Backend serialises CLI calls (exclusive chain), so overlapping
+  // learns queue safely and each sees the previous result.
   async function doLearn(entry: Entry) {
     if (!config?.autoLearn) { flashToast('Result saved ✓'); return }
-    setLearning(true)
+    setLearnCount((n) => n + 1)
     try {
       const { playbook: pb } = await window.api.learn(entry)
       setPlaybook(pb)
       flashToast('Playbook updated ✓')
     } catch {
       flashToast('Saved — learning step failed')
-    } finally { setLearning(false) }
+    } finally { setLearnCount((n) => Math.max(0, n - 1)) }
   }
 
   async function generate() {
@@ -255,10 +262,13 @@ export function App() {
     setCurrent(updated)
     const next = history.map((h) => (h.id === current.id ? updated : h))
     persist(next)
+    // Immediate confirmation, then learning runs in the background (not awaited)
+    // so you can keep working straight away.
+    if (config.autoLearn) flashToast('Saved ✓ — teaching the playbook in the background')
     doLearn(updated)
-    // Record coverage (aircraft + setting) ONLY for Good/Viral clips the user kept
-    // (checkbox on). Skip if already captured (pickedEnv present) or opted out.
-    if ((reachDraft === 'good' || reachDraft === 'viral') && !excl && !updated.pickedEnv) {
+    // Record coverage (aircraft + setting) for any clip the user kept (checkbox on).
+    // Skip if already captured (pickedEnv present) or opted out via the checkbox.
+    if (!excl && !updated.pickedEnv) {
       try {
         const scene = await window.api.identifyScene(updated.text)
         if (scene && (scene.aircraft || scene.environment)) {
@@ -336,7 +346,7 @@ export function App() {
             <div style={{ fontSize: 22, fontWeight: 600, marginTop: 2 }}>Scale-illusion prompt lab</div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            {learning && <span style={{ color: ACCENT, fontSize: 12.5, fontWeight: 600 }}>learning…</span>}
+            {learning && <span style={{ color: ACCENT, fontSize: 12.5, fontWeight: 600 }}>teaching playbook…{learnCount > 1 ? ` (${learnCount})` : ''}</span>}
             <button onClick={() => setView('settings')} style={{ ...ghostBtn, padding: '8px 14px' }}>Settings</button>
           </div>
         </div>
@@ -523,8 +533,8 @@ export function App() {
                   {ILLUSION_TAGS.map((t) => <button key={t} onClick={() => setPickedTags((p) => p.includes(t) ? p.filter((x) => x !== t) : [...p, t])} style={{ borderRadius: 20, padding: '6px 13px', fontSize: 12.5, cursor: 'pointer', border: `1px solid ${pickedTags.includes(t) ? BAD : LINE}`, background: pickedTags.includes(t) ? '#F6E4E1' : '#fff', color: pickedTags.includes(t) ? BAD : INK }}>{t}</button>)}
                 </div>
 
-                {/* Coverage opt-out — relevant for any clip scored Good/Viral */}
-                {(reachDraft === 'good' || reachDraft === 'viral') && (
+                {/* Coverage opt-out — available for any scored clip so it can be ignored */}
+                {reachDraft && (
                   <label style={{ display: 'flex', alignItems: 'flex-start', gap: 9, cursor: 'pointer', fontSize: 12.5, marginBottom: 14, padding: '9px 11px', border: `1px solid ${LINE}`, borderRadius: 9, background: '#fff' }}>
                     <input type="checkbox" checked={!excludeCoverage} onChange={(e) => setExcludeCoverage(!e.target.checked)} style={{ width: 15, height: 15, accentColor: ACCENT, flexShrink: 0, marginTop: 2 }} />
                     <span><span style={{ fontWeight: 600 }}>Add this clip to coverage.</span> <span style={{ color: MUTE }}>Remembers the aircraft + setting so future “{current.scenario}” prompts can vary. Untick to skip recording this one.</span></span>
@@ -534,11 +544,11 @@ export function App() {
                 {/* Step 3 — explicit submit; learning runs once, here */}
                 <button
                   onClick={submitScore}
-                  disabled={!reachDraft || learning}
+                  disabled={!reachDraft}
                   title={!reachDraft ? 'Pick a reach tier first' : undefined}
-                  style={{ ...primaryBtn, cursor: !reachDraft || learning ? 'default' : 'pointer', opacity: !reachDraft || learning ? 0.55 : 1 }}
+                  style={{ ...primaryBtn, cursor: !reachDraft ? 'default' : 'pointer', opacity: !reachDraft ? 0.55 : 1 }}
                 >
-                  {learning ? 'Teaching the playbook…' : cur && cur.status === 'scored' ? 'Re-save & update playbook' : config.autoLearn ? 'Save & teach the playbook →' : 'Save result →'}
+                  {cur && cur.status === 'scored' ? 'Re-save & update playbook' : config.autoLearn ? 'Save & teach the playbook →' : 'Save result →'}
                 </button>
                 <div style={{ minHeight: 18, textAlign: 'center', fontSize: 12, marginTop: 7, color: toast ? GOOD : MUTE, fontWeight: toast ? 600 : 400 }}>
                   {toast || (config.autoLearn ? 'Your comment is digested against this exact prompt — wins get reused, mistakes get avoided.' : 'Auto-learn is off — this just records the score.')}
