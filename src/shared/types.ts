@@ -52,6 +52,8 @@ export interface GenerateRequest {
   hook: boolean
   multiShot: boolean
   punchyOpen: boolean
+  /** Opt-in: restrict the aircraft's airline/operator to Tier-1 (Western developed) countries, e.g. to steer away from repeat picks like ANA. */
+  tier1Only: boolean
   /** Opt-in: feed recent Good/Viral environments for this scenario so the engine varies the setting. */
   varyCoverage: boolean
   /** Opt-in: inject the current trends digest so the engine can ride what's hot. */

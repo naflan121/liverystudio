@@ -116,6 +116,7 @@ export function App() {
   const [hook, setHook] = useState(false)
   const [multiShot, setMultiShot] = useState(false)
   const [punchyOpen, setPunchyOpen] = useState(false)
+  const [tier1Only, setTier1Only] = useState(false)
   const [varyCoverage, setVaryCoverage] = useState(false)
   const [useTrends, setUseTrends] = useState(false)
   const [candidateMode, setCandidateMode] = useState(false)
@@ -204,7 +205,7 @@ export function App() {
     setError(''); setLoading(true); setPickedTags([]); setComment(''); setReachDraft(null); setExcludeCoverage(false); setCandidates([])
     const pool = SCENARIOS.filter((s) => s.id !== 'random')
     const resolved = scenario === 'random' ? pool[Math.floor(Math.random() * pool.length)] : SCENARIOS.find((s) => s.id === scenario)!
-    const req = { resolved, aircraft, crowd, env, hook, multiShot, punchyOpen, varyCoverage, useTrends, explore, nudge }
+    const req = { resolved, aircraft, crowd, env, hook, multiShot, punchyOpen, tier1Only, varyCoverage, useTrends, explore, nudge }
     const mk = (res: { text: string; title: string; filename: string }): Entry => ({
       id: Date.now(), text: res.text, title: res.title, filename: res.filename,
       scenario: resolved.label, scenarioId: resolved.id, aircraft, pickedAircraft: '', pickedEnv: '', crowd, env, hook, multiShot, punchyOpen,
@@ -398,6 +399,11 @@ export function App() {
             <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13 }}>
               <input type="checkbox" checked={punchyOpen} onChange={(e) => setPunchyOpen(e.target.checked)} style={{ width: 16, height: 16, accentColor: ACCENT, flexShrink: 0 }} />
               <span><span style={{ fontWeight: 600 }}>Punchy 3-sec open.</span> <span style={{ color: MUTE }}>Engineer a scroll-stopping first second.</span></span>
+            </label>
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: aircraft === 'placeholder' ? 'not-allowed' : 'pointer', fontSize: 13, opacity: aircraft === 'placeholder' ? 0.5 : 1 }}>
+              <input type="checkbox" checked={tier1Only} disabled={aircraft === 'placeholder'} onChange={(e) => setTier1Only(e.target.checked)} style={{ width: 16, height: 16, accentColor: ACCENT, flexShrink: 0 }} />
+              <span><span style={{ fontWeight: 600 }}>Tier-1 countries only.</span> <span style={{ color: MUTE }}>Airline/operator from USA, Canada, UK, Australia, NZ only — steers off repeats like ANA.</span></span>
             </label>
 
             <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13 }}>

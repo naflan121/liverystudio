@@ -93,6 +93,11 @@ export function trendMasterPrompt(): string {
   return `${TREND_SYSTEM}\n\n(Today's date matters — search for the most current information you can find.)`
 }
 
+// Countries whose flag carriers / operators count as "Tier 1" for the tier1Only
+// lever. Western developed nations — recognisable liveries, and a deliberate
+// counterweight to the model's habit of defaulting to a few Asian/Gulf carriers.
+export const TIER1_COUNTRIES = 'the United States, Canada, the United Kingdom, Australia, and New Zealand'
+
 export function buildUserMessage(req: GenerateRequest, playbook: string, extraNegatives: string, avoidAircraft: string[] = [], avoidEnvs: string[] = [], trends = ''): string {
   const { resolved, aircraft, crowd, env, hook, multiShot, punchyOpen, explore, nudge } = req
   const parts: string[] = []
@@ -129,6 +134,13 @@ export function buildUserMessage(req: GenerateRequest, playbook: string, extraNe
   // different scenario). Commercial picks only.
   if (aircraft !== 'placeholder' && avoidAircraft.length) {
     parts.push(`These aircraft have ALREADY done well for this exact scenario — to broaden coverage, pick a DIFFERENT one and do NOT repeat any of these (a different airline, type, or model all count as different):\n${avoidAircraft.map((a) => '- ' + a).join('\n')}`)
+  }
+
+  // Tier-1 restriction: hard constraint that overrides the "range widely across
+  // the world's airlines" guidance in the aircraft line above, so the operator
+  // stays inside the Western developed set the user asked for.
+  if (req.tier1Only && aircraft !== 'placeholder') {
+    parts.push(`TIER-1 COUNTRY RESTRICTION (hard constraint): the aircraft's airline or operator MUST be based in one of these Tier-1 countries — ${TIER1_COUNTRIES}. This OVERRIDES any "range widely across the world's airlines" guidance above: still vary and avoid recent repeats, but ONLY within these countries. For a commercial airliner pick a real flag carrier or major airline from one of these nations (e.g. American Airlines, Delta, United, Southwest, JetBlue, Alaska Airlines, Air Canada, WestJet, British Airways, Virgin Atlantic, Qantas, Jetstar, Air New Zealand); for a military or vintage aircraft use one operated by one of these countries' armed forces. Do NOT pick an airline or operator from outside this list — in particular no European carriers (e.g. Lufthansa, Air France, KLM), and no Asian or Gulf carriers (e.g. ANA, Japan Airlines, Emirates, Qatar, Singapore Airlines).`)
   }
 
   const envObj = ENV.find((e) => e.id === env)
