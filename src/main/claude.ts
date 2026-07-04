@@ -121,14 +121,14 @@ export function callClaude(userContent: string, opts: ClaudeOptions): Promise<st
   })
 }
 
-/** Quick connectivity check for the Settings page. */
-export async function testCli(cliPath?: string): Promise<{ ok: boolean; path: string; message: string }> {
+/** Quick connectivity check for the Settings page. Uses the configured generation model so the test exercises the same model generation will. */
+export async function testCli(cliPath?: string, model = 'claude-sonnet-5'): Promise<{ ok: boolean; path: string; message: string }> {
   const bin = detectCli(cliPath)
   if (!bin) return { ok: false, path: '', message: 'Claude CLI not found on this PC. Install Claude Code or set the path manually.' }
   try {
     const reply = await callClaude('Reply with exactly: OK', {
       cliPath: bin,
-      model: 'claude-sonnet-4-6',
+      model,
       system: 'You are a connectivity test. Output only what is asked.',
       timeoutMs: 60000,
     })

@@ -98,8 +98,22 @@ export function trendMasterPrompt(): string {
 // counterweight to the model's habit of defaulting to a few Asian/Gulf carriers.
 export const TIER1_COUNTRIES = 'the United States, Canada, the United Kingdom, Australia, and New Zealand'
 
+// European counterpart of the Tier-1 lever: restricts the operator to European
+// countries (UK included — it is European even though it is also Tier-1).
+export const EUROPE_EXAMPLES = 'Lufthansa, British Airways, Air France, KLM, Ryanair, easyJet, Wizz Air, SAS, Finnair, Swiss, Austrian, Iberia, Vueling, TAP Air Portugal, LOT, Aegean, Icelandair'
+
+/** Marker line separating variants when several prompts are requested in one call. */
+export const VARIANT_SEPARATOR = '====='
+
+/** Split a multi-variant response into individual prompts; falls back to the whole text. */
+export function parseVariants(raw: string): string[] {
+  const parts = raw.split(/^\s*={3,}\s*$/m).map((s) => s.trim()).filter(Boolean)
+  const valid = parts.filter((p) => p.includes('Visual:') && p.includes('Negative:'))
+  return valid.length ? valid : [raw.trim()]
+}
+
 export function buildUserMessage(req: GenerateRequest, playbook: string, extraNegatives: string, avoidAircraft: string[] = [], avoidEnvs: string[] = [], trends = ''): string {
-  const { resolved, aircraft, crowd, env, hook, multiShot, punchyOpen, explore, nudge } = req
+  const { resolved, aircraft, crowd, env, camera, hook, multiShot, punchyOpen, explore, nudge } = req
   const parts: string[] = []
 
   let sc = `Scenario: ${resolved.brief || 'Choose a strong scenario yourself.'}`
@@ -136,11 +150,14 @@ export function buildUserMessage(req: GenerateRequest, playbook: string, extraNe
     parts.push(`These aircraft have ALREADY done well for this exact scenario — to broaden coverage, pick a DIFFERENT one and do NOT repeat any of these (a different airline, type, or model all count as different):\n${avoidAircraft.map((a) => '- ' + a).join('\n')}`)
   }
 
-  // Tier-1 restriction: hard constraint that overrides the "range widely across
-  // the world's airlines" guidance in the aircraft line above, so the operator
-  // stays inside the Western developed set the user asked for.
-  if (req.tier1Only && aircraft !== 'placeholder') {
+  // Operator-region restriction: hard constraint that overrides the "range
+  // widely across the world's airlines" guidance in the aircraft line above.
+  // 'tier1' is the original lever; 'europe' is its European counterpart.
+  const region = req.region || (req.tier1Only ? 'tier1' : 'any')
+  if (region === 'tier1' && aircraft !== 'placeholder') {
     parts.push(`TIER-1 COUNTRY RESTRICTION (hard constraint): the aircraft's airline or operator MUST be based in one of these Tier-1 countries — ${TIER1_COUNTRIES}. This OVERRIDES any "range widely across the world's airlines" guidance above: still vary and avoid recent repeats, but ONLY within these countries. For a commercial airliner pick a real flag carrier or major airline from one of these nations (e.g. American Airlines, Delta, United, Southwest, JetBlue, Alaska Airlines, Air Canada, WestJet, British Airways, Virgin Atlantic, Qantas, Jetstar, Air New Zealand); for a military or vintage aircraft use one operated by one of these countries' armed forces. Do NOT pick an airline or operator from outside this list — in particular no European carriers (e.g. Lufthansa, Air France, KLM), and no Asian or Gulf carriers (e.g. ANA, Japan Airlines, Emirates, Qatar, Singapore Airlines).`)
+  } else if (region === 'europe' && aircraft !== 'placeholder') {
+    parts.push(`EUROPE-ONLY RESTRICTION (hard constraint): the aircraft's airline or operator MUST be based in a European country (the UK counts as Europe here). This OVERRIDES any "range widely across the world's airlines" guidance above: still vary and avoid recent repeats, but ONLY within Europe. For a commercial airliner pick a real European carrier (e.g. ${EUROPE_EXAMPLES}); for a military or vintage aircraft use one operated by a European air force. Do NOT pick an operator from outside Europe — no US, Canadian, Asian, Gulf, or Oceanian carriers.`)
   }
 
   const envObj = ENV.find((e) => e.id === env)
@@ -148,6 +165,16 @@ export function buildUserMessage(req: GenerateRequest, playbook: string, extraNe
   else if (envObj && envObj.desc) parts.push(`Environment: set it at ${envObj.desc}`)
   if (env === 'auto' && avoidEnvs.length) parts.push(`Recent Good/Viral clips for this scenario used these settings — to broaden coverage, choose a DIFFERENT environment and do not repeat: ${avoidEnvs.join('; ')}.`)
   if (env !== 'tarmac' && env !== 'auto') parts.push('Surface: there is no paved runway here — taxi, takeoff roll and landing all happen on the natural unpaved ground of THIS setting (grass, sand, dirt or cracked lakebed as fits — not necessarily grass); treat any runway wording as this unpaved strip, and show the airframe bumping, pitching and bobbling over the uneven ground while its wheels are down.')
+
+  // Camera identity — who is holding the camera. Casual eyewitness footage is a
+  // strong "is this real?" cue on Reels/Shorts; keep ONE identity per clip.
+  parts.push(camera === 'phone'
+    ? 'CAMERA IDENTITY: the whole clip is bystander smartphone footage — handheld at eye level from the crowd line, natural micro-shake and breathing in the frame, slightly imperfect framing with a small drift and re-centre as it tracks the model, a touch of digital-zoom softness on the longest moments. It must read as genuine eyewitness phone video someone just posted, never a polished production. Keep this one identity for the entire clip.'
+    : camera === 'longlens'
+    ? 'CAMERA IDENTITY: the whole clip is planespotter super-telephoto footage from a distance — heavy lens compression flattening the scene, a smooth tripod pan tracking the model, slight focus breathing and heat-haze shimmer between lens and subject. It must read like avgeek spotter footage. Keep this one identity for the entire clip.'
+    : camera === 'broadcast'
+    ? 'CAMERA IDENTITY: the whole clip is a professional airshow broadcast camera — a fluid-head pan on a long lens from a fixed elevated platform, steady confident framing that holds the model cleanly, the polish of live event television. Keep this one identity for the entire clip.'
+    : 'CAMERA IDENTITY: YOU choose who is holding the camera — bystander smartphone (handheld micro-shake, eyewitness feel — often the strongest "is this real?" cue), planespotter super-telephoto (compression, tripod pan), or an airshow broadcast camera — pick whichever sells the illusion hardest for THIS scenario and vary it across clips. Commit to ONE camera identity and keep it consistent for the whole clip.')
 
   parts.push('AUDIENCE PATTERNS for this page (weight these): 1) recognisable commercial airliners and famous liveries get the most reach; 2) crowds and airshow settings increase reach; 3) the goal is reach, with realism as the main tool.')
 
@@ -169,6 +196,12 @@ export function buildUserMessage(req: GenerateRequest, playbook: string, extraNe
 
   if (playbook && playbook.trim()) parts.push('LEARNED PLAYBOOK (what has worked on this page — reuse the winning ingredients in a fresh scene, heed what flops):\n' + playbook.trim())
 
+  // Remix mode: double down on a proven winner without reposting it. Placed
+  // just before the nudge so the user's direction can still steer the remix.
+  if (req.remixText && req.remixText.trim()) {
+    parts.push(`REMIX A PROVEN WINNER: the prompt below already earned strong reach on this page. Write a FRESH prompt that keeps the ingredients that made it work — its pacing and energy, camera behaviour, crowd feel, scale cues and overall structure — but changes the surface so it never reads as a repost: use a DIFFERENT aircraft/airline (unless the user direction below names one) and vary the setting, lighting or time of day. Do not copy sentences verbatim.\n--- WINNER TO REMIX ---\n${req.remixText.trim()}`)
+  }
+
   // The user's one-off direction is authoritative: it must beat the lever
   // defaults above (aircraft/scenario/crowd/env), which is why it goes last
   // and is stated as an explicit override. Only the fixed production rules hold.
@@ -177,8 +210,22 @@ export function buildUserMessage(req: GenerateRequest, playbook: string, extraNe
 This direction OVERRIDES the scenario, aircraft, crowd and environment choices above wherever they conflict — follow it exactly. If it names a specific aircraft, airline or livery, USE THAT EXACT ONE: ignore any "range widely / avoid the usual airlines" guidance and ignore the "[MODEL NAME] token / livery from a reference image" instruction for this prompt, and name the aircraft the user asked for. Only the fixed production, scale-illusion, aerodynamic, audio and Negative-section rules stay non-negotiable.`)
   }
 
-  parts.push('Write one new prompt now. Output only the three sections.')
+  const n = req.candidates && req.candidates > 1 ? req.candidates : 1
+  parts.push(n > 1
+    ? `Write ${n} clearly DIFFERENT prompts now — vary the aircraft, setting, camera and energy between them so they are genuinely distinct options, each still obeying every rule above. Output each prompt in the exact three-section format, and separate the prompts with a line containing only ${VARIANT_SEPARATOR} (five equals signs). No numbering, no commentary, nothing else between them.`
+    : 'Write one new prompt now. Output only the three sections.')
   return parts.join('\n\n')
+}
+
+export const CAPTION_SYSTEM = `You write ONE social caption (plus hashtags) for an RC scale-model aircraft video posted to Facebook Reels / YouTube Shorts. The clip shows an RC model filmed to look strikingly real; the honest hook is how real it looks, never a claim that it is a full-size aircraft.
+Rules:
+- Line 1: the caption — under 200 characters, plain text, no hashtags. Its FIRST few words must hook (viewers only see the first line before "…more"). Make clear it is RC / a scale model. End with a short question that invites comments (comments drive reach) — e.g. would you have believed it, how they'd film it, have they flown one.
+- Line 2: 5-8 hashtags separated by single spaces — mix broad reach tags (#rcplane #rcaviation #aviation #scalemodel) with specific ones for this clip (aircraft type, airline, maneuver). Lowercase except proper names.
+- No emojis beyond at most one, no quotation marks, no markdown.
+Output exactly these two lines and nothing else.`
+
+export function captionMsg(text: string, title: string): string {
+  return `Video prompt:\n\n${text}${title ? `\n\nThe video's title (do not repeat it verbatim): ${title}` : ''}`
 }
 
 export function titleMsg(text: string, avoid: string[]): string {
@@ -195,7 +242,8 @@ export function buildRedistillMessage(entries: Entry[], budget: number): string 
     const flags = e.tags && e.tags.length ? e.tags.join(', ') : 'none'
     const comment = e.comment && e.comment.trim() ? `"${e.comment.trim()}"` : 'none'
     const winner = e.reach === 'good' || e.reach === 'viral'
-    const head = `${i + 1}. [${reach}] ${e.scenario} · aircraft:${e.aircraft}${e.pickedAircraft ? ` (${e.pickedAircraft})` : ''} · crowd:${e.crowd} · env:${e.env}${e.hook ? ' · hook' : ''}${e.multiShot ? ' · multi-shot' : ''}${e.punchyOpen ? ' · punchy-open' : ''}`
+    const region = e.region || (e.tier1Only ? 'tier1' : '')
+    const head = `${i + 1}. [${reach}] ${e.scenario} · aircraft:${e.aircraft}${e.pickedAircraft ? ` (${e.pickedAircraft})` : ''} · crowd:${e.crowd} · env:${e.env}${e.camera && e.camera !== 'auto' ? ` · cam:${e.camera}` : ''}${region && region !== 'any' ? ` · region:${region}` : ''}${e.remixOf ? ' · remix-of-winner' : ''}${e.hook ? ' · hook' : ''}${e.multiShot ? ' · multi-shot' : ''}${e.punchyOpen ? ' · punchy-open' : ''}${e.nudge && e.nudge.trim() ? ` · user direction:"${e.nudge.trim().slice(0, 80)}"` : ''}`
     const detail = `   flags: ${flags} · comment: ${comment}`
     const prompt = winner ? `\n   prompt: ${e.text.replace(/\s+/g, ' ').slice(0, 600)}` : ''
     return `${head}\n${detail}${prompt}`
@@ -213,7 +261,7 @@ export function buildLearnMessage(playbook: string, entry: Entry, budget: number
   const comment = entry.comment && entry.comment.trim() ? `"${entry.comment.trim()}"` : 'none'
   return [
     `CURRENT PLAYBOOK:\n${playbook && playbook.trim() ? playbook.trim() : '(empty — start a new one)'}`,
-    `NEW RESULT:\n- Reach: ${reachLabel}\n- Scenario: ${entry.scenario}\n- Aircraft pick: ${entry.aircraft}\n- Crowd: ${entry.crowd}\n- Environment: ${entry.env}\n- Hook mode: ${entry.hook ? 'yes' : 'no'}\n- Multi-shot: ${entry.multiShot ? 'yes' : 'no'}\n- Punchy open: ${entry.punchyOpen ? 'yes' : 'no'}\n- Illusion-break flags: ${flags}\n- Creator comment: ${comment}`,
+    `NEW RESULT:\n- Reach: ${reachLabel}\n- Scenario: ${entry.scenario}\n- Aircraft pick: ${entry.aircraft}${entry.pickedAircraft ? ` (${entry.pickedAircraft})` : ''}${(entry.region === 'tier1' || (!entry.region && entry.tier1Only)) ? ' (Tier-1 countries restriction was ON — the airline choice was constrained)' : entry.region === 'europe' ? ' (Europe-only restriction was ON — the airline choice was constrained)' : ''}\n- Crowd: ${entry.crowd}\n- Environment: ${entry.env}\n- Camera: ${entry.camera || 'auto'}\n- Hook mode: ${entry.hook ? 'yes' : 'no'}\n- Multi-shot: ${entry.multiShot ? 'yes' : 'no'}\n- Punchy open: ${entry.punchyOpen ? 'yes' : 'no'}${entry.remixOf ? '\n- Remixed from a previous Good/Viral winner (deliberately reused its winning ingredients)' : ''}${entry.nudge && entry.nudge.trim() ? `\n- User's one-off direction for this clip (overrode the levers): "${entry.nudge.trim()}"` : ''}\n- Illusion-break flags: ${flags}\n- Creator comment: ${comment}`,
     `The exact prompt that produced it:\n${entry.text}`,
     `Diagnose the REAL reason from the comment and flags, attach the lesson to that root cause as a transferable craft rule, and do NOT blame the environment / scenario / aircraft unless the evidence points there. If there is no comment and no flag, do not invent a cause. Rewrite the whole playbook now. Markdown only, under ${budget} characters.`,
   ].join('\n\n')

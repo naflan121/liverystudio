@@ -12,7 +12,11 @@ const api = {
   setPlaybook: (text: string): Promise<boolean> => ipcRenderer.invoke('playbook:set', text),
   getLearningLog: (): Promise<LearningLogEntry[]> => ipcRenderer.invoke('learning:log'),
   generate: (req: GenerateRequest): Promise<GenerateResult> => ipcRenderer.invoke('generate', req),
+  /** Candidate mode: N distinct prompts from one CLI call (no titles — write one for the chosen candidate). */
+  generateBatch: (req: GenerateRequest): Promise<GenerateResult[]> => ipcRenderer.invoke('generate:batch', req),
   title: (payload: { text: string; avoid: string[] }): Promise<string> => ipcRenderer.invoke('title', payload),
+  caption: (payload: { text: string; title: string }): Promise<string> => ipcRenderer.invoke('caption', payload),
+  getPlaybookVersions: (): Promise<{ ts: string; text: string }[]> => ipcRenderer.invoke('playbook:versions'),
   learn: (entry: Entry): Promise<{ playbook: string }> => ipcRenderer.invoke('learn', entry),
   redistill: (): Promise<{ playbook: string; used: number }> => ipcRenderer.invoke('learn:redistill'),
   identifyScene: (text: string): Promise<{ aircraft: string; environment: string }> => ipcRenderer.invoke('scene:identify', text),

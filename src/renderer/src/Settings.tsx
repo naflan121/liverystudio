@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { INK, PAPER, LINE, MUTE, ACCENT, GOOD, BAD, SCREEN, SCREEN_TX, lbl, sel, ghostBtn } from './ui'
-import { AIRCRAFT, CROWD, ENV, groupScenarios } from '@shared/domain'
+import { AIRCRAFT, CAMERA, CROWD, ENV, groupScenarios } from '@shared/domain'
 import { trendMasterPrompt } from '@shared/prompts'
 import type { AppConfig, CliTestResult, Entry, LogLine, LogLevel } from '@shared/types'
 
@@ -8,8 +8,10 @@ const LOG_COLORS: Record<LogLevel, string> = { info: '#9c968a', step: '#f2a55e',
 function logTime(ts: number): string { const d = new Date(ts); const p = (n: number) => String(n).padStart(2, '0'); return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}` }
 
 const MODELS = [
-  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6 (balanced — default)' },
+  { id: 'claude-sonnet-5', label: 'Sonnet 5 (balanced — recommended)' },
+  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6 (previous gen)' },
   { id: 'claude-opus-4-8', label: 'Opus 4.8 (highest quality)' },
+  { id: 'claude-fable-5', label: 'Fable 5 (most capable — premium cost)' },
   { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5 (fastest / cheapest)' },
 ]
 
@@ -78,6 +80,42 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
       .map(([scenario, d]) => ({ scenario, aircraft: Object.entries(d.aircraft).sort((a, b) => b[1] - a[1]), envs: Object.entries(d.envs).sort((a, b) => b[1] - a[1]) }))
       .sort((a, b) => a.scenario.localeCompare(b.scenario))
   }, [history])
+
+  // Win rates per lever value, from scored history. A "win" is Good or Viral.
+  // Only values with 2+ scored clips are shown — one data point isn't a signal.
+  const winRates = useMemo(() => {
+    const scored = history.filter((h) => h.status === 'scored' && h.reach)
+    const dims: { title: string; key: (h: Entry) => string }[] = [
+      { title: 'Scenario', key: (h) => h.scenario },
+      { title: 'Aircraft mode', key: (h) => h.aircraft },
+      { title: 'Crowd', key: (h) => h.crowd },
+      { title: 'Environment', key: (h) => h.env },
+      { title: 'Camera', key: (h) => h.camera || 'auto' },
+      { title: 'Hook mode', key: (h) => (h.hook ? 'hook on' : 'hook off') },
+      { title: 'Punchy open', key: (h) => (h.punchyOpen ? 'punchy open' : 'normal open') },
+    ]
+    return dims.map(({ title, key }) => {
+      const groups: Record<string, { wins: number; total: number }> = {}
+      for (const h of scored) {
+        const k = (key(h) || '').trim()
+        if (!k) continue
+        const g = (groups[k] = groups[k] || { wins: 0, total: 0 })
+        g.total++
+        if (h.reach === 'good' || h.reach === 'viral') g.wins++
+      }
+      const rows = Object.entries(groups)
+        .filter(([, g]) => g.total >= 2)
+        .map(([label, g]) => ({ label, wins: g.wins, total: g.total, pct: Math.round((g.wins / g.total) * 100) }))
+        .sort((a, b) => b.pct - a.pct || b.total - a.total)
+      return { title, rows }
+    }).filter((d) => d.rows.length > 0)
+  }, [history])
+
+  // Previous playbook versions (snapshotted on every overwrite) for rollback.
+  const [pbVersions, setPbVersions] = useState<{ ts: string; text: string }[]>([])
+  useEffect(() => {
+    if (typeof window.api?.getPlaybookVersions === 'function') window.api.getPlaybookVersions().then(setPbVersions).catch(() => {})
+  }, [])
 
   const [trends, setTrendsState] = useState<{ text: string; updatedAt: string }>({ text: '', updatedAt: '' })
   const [refreshingTrends, setRefreshingTrends] = useState(false)
@@ -259,9 +297,44 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
               <button onClick={() => window.api.openDataFolder()} style={ghostBtn}>Open data folder</button>
               <button onClick={resetMemory} style={{ ...ghostBtn, color: BAD, borderColor: BAD, marginLeft: 'auto' }}>Reset all memory</button>
             </div>
+            {pbVersions.length > 0 && (
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                <select value="" onChange={(e) => { const i = Number(e.target.value); if (!Number.isNaN(i) && pbVersions[i]) { setPb(pbVersions[i].text); setPbMsg('Previous version loaded into the editor — click “Save playbook” to restore it.') } }} style={{ ...sel, maxWidth: 360 }}>
+                  <option value="" disabled>Roll back — load a previous version…</option>
+                  {pbVersions.map((v, i) => <option key={v.ts + i} value={i}>{new Date(v.ts).toLocaleString()} · {v.text.length} chars</option>)}
+                </select>
+                <span style={{ fontSize: 12, color: MUTE }}>Every playbook rewrite keeps the last {pbVersions.length >= 10 ? 10 : 'few'} versions.</span>
+              </div>
+            )}
             <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.55 }}>
               <strong>Re-distill</strong> rebuilds the whole playbook from scratch across all your scored results (uses the Learning model). Good for clearing accumulated bias.{pbMsg ? <span style={{ color: GOOD, fontWeight: 600 }}> {pbMsg}</span> : null}
             </div>
+          </Card>
+
+          <Card title="What's working · win rates">
+            <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>
+              Share of your scored clips that hit <strong>Good</strong> or <strong>Viral</strong>, per lever value (values with at least 2 scored clips). This is the raw data the playbook learns from — use it to spot which levers to lean on.
+            </div>
+            {winRates.length === 0 ? (
+              <div style={{ fontSize: 13, color: MUTE }}>Not enough scored clips yet — score a few results and win rates appear here.</div>
+            ) : (
+              <div style={{ display: 'grid', gap: 14 }}>
+                {winRates.map((d) => (
+                  <div key={d.title}>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>{d.title}</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+                      {d.rows.map((r) => (
+                        <span key={r.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${LINE}`, borderRadius: 20, padding: '5px 12px', fontSize: 12.5, background: '#faf9f6' }}>
+                          {r.label}
+                          <strong style={{ color: r.pct >= 50 ? GOOD : r.pct >= 25 ? INK : BAD }}>{r.wins}/{r.total}</strong>
+                          <span style={{ color: MUTE }}>{r.pct}%</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </Card>
 
           <Card title="Coverage · aircraft & settings">
@@ -361,6 +434,7 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
               <Field label="Aircraft"><select value={c.defaults.aircraft} onChange={(e) => setDef({ aircraft: e.target.value })} style={sel}>{AIRCRAFT.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}</select></Field>
               <Field label="Crowd"><select value={c.defaults.crowd} onChange={(e) => setDef({ crowd: e.target.value })} style={sel}>{CROWD.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}</select></Field>
               <Field label="Environment"><select value={c.defaults.env} onChange={(e) => setDef({ env: e.target.value })} style={sel}>{ENV.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}</select></Field>
+              <Field label="Camera identity"><select value={c.defaults.camera || 'auto'} onChange={(e) => setDef({ camera: e.target.value })} style={sel}>{CAMERA.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}</select></Field>
             </div>
             <Field label={`Exploration · ${c.defaults.explore}`}>
               <input type="range" min={0} max={100} value={c.defaults.explore} onChange={(e) => setDef({ explore: +e.target.value })} style={{ width: '100%', accentColor: ACCENT }} />

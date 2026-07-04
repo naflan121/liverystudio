@@ -10,7 +10,7 @@ const LOCATION_FILE = path.join(app.getPath('userData'), 'location.json')
 
 export const DEFAULT_CONFIG: AppConfig = {
   cliPath: '',
-  generationModel: 'claude-sonnet-4-6',
+  generationModel: 'claude-sonnet-5',
   // The distill/re-distill pass does the hardest reasoning (causal attribution),
   // so it defaults to the strongest model. The cheap, mechanical airliner-ID call
   // does NOT use this — it runs on a fixed fast model (see FAST_MODEL in main).
@@ -29,6 +29,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     aircraft: 'placeholder',
     crowd: 'busy',
     env: 'auto',
+    camera: 'auto',
     explore: 45,
     hook: false,
     multiShot: false,
@@ -90,7 +91,7 @@ export function dataDir(): string {
   return app.getPath('userData')
 }
 
-const FILES = ['config.json', 'history.json', 'playbook.md', 'learning-log.jsonl', 'trends.json']
+const FILES = ['config.json', 'history.json', 'playbook.md', 'playbook-versions.json', 'learning-log.jsonl', 'trends.json']
 
 /** Point the app at a new data folder; copy existing files over if the target lacks them. */
 export function setDataDir(dir: string): { ok: boolean; message: string; dir: string } {
@@ -163,6 +164,7 @@ export function getPlaybook(): string {
 
 export function setPlaybook(text: string): void {
   const file = p('playbook.md')
+  savePlaybookVersion()
   backup(file)
   const tmp = `${file}.tmp`
   try {
@@ -171,6 +173,28 @@ export function setPlaybook(text: string): void {
   } catch {
     fs.writeFileSync(file, text, 'utf8')
   }
+}
+
+// --- Playbook version history: every overwrite snapshots the outgoing playbook
+// (last 10 kept), so a bad learn can be rolled back from Settings instead of
+// being lost forever.
+const PLAYBOOK_VERSIONS_MAX = 10
+
+export interface PlaybookVersion { ts: string; text: string }
+
+export function getPlaybookVersions(): PlaybookVersion[] {
+  return readJson<PlaybookVersion[]>(p('playbook-versions.json'), [])
+}
+
+function savePlaybookVersion(): void {
+  try {
+    const current = getPlaybook()
+    if (!current.trim()) return
+    const versions = getPlaybookVersions()
+    if (versions.length && versions[0].text === current) return
+    versions.unshift({ ts: new Date().toISOString(), text: current })
+    writeJson(p('playbook-versions.json'), versions.slice(0, PLAYBOOK_VERSIONS_MAX))
+  } catch { /* non-critical */ }
 }
 
 export function appendLearningLog(entry: LearningLogEntry): void {
@@ -202,7 +226,7 @@ export function setTrends(text: string): { text: string; updatedAt: string } {
 }
 
 export function resetMemory(): void {
-  for (const f of ['history.json', 'playbook.md', 'learning-log.jsonl']) {
+  for (const f of ['history.json', 'playbook.md', 'playbook-versions.json', 'learning-log.jsonl']) {
     try { const fp = p(f); if (fs.existsSync(fp)) fs.unlinkSync(fp) } catch { /* ignore */ }
   }
 }

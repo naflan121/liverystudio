@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   INK, PAPER, LINE, MUTE, ACCENT, GOOD, BAD, VIRAL, WAIT, SCREEN, SCREEN_TX, lbl, sel, ghostBtn, primaryBtn, card,
 } from './ui'
-import { REACH, ILLUSION_TAGS, AIRCRAFT, CROWD, ENV, SCENARIOS, groupScenarios } from '@shared/domain'
-import { snippet, toFilename } from '@shared/util'
-import type { AppConfig, Entry, ReachId, LogLine, LogLevel } from '@shared/types'
+import { REACH, ILLUSION_TAGS, AIRCRAFT, CAMERA, CROWD, ENV, REGION, SCENARIOS, groupScenarios } from '@shared/domain'
+import { snippet, toFilename, splitSections } from '@shared/util'
+import type { AppConfig, Entry, ReachId, LogLine, LogLevel, Scenario } from '@shared/types'
 import { Settings } from './Settings'
 
 const LOG_COLORS: Record<LogLevel, string> = {
@@ -89,19 +89,6 @@ function ago(h: Entry, posted?: boolean) {
   const w = Math.floor(d / 7)
   return w + (w === 1 ? ' week ago' : ' weeks ago')
 }
-function splitForView(text: string) {
-  const out: { label: string; body: string }[] = []
-  const arr = ['Visual:', 'Audio:', 'Negative:']
-  arr.forEach((label, i) => {
-    const start = text.indexOf(label)
-    if (start === -1) return
-    let end = text.length
-    for (let j = i + 1; j < arr.length; j++) { const n = text.indexOf(arr[j]); if (n > -1) { end = n; break } }
-    const body = text.slice(start + label.length, end).trim()
-    out.push({ label, body: body ? ' ' + body : '' })
-  })
-  return out.length ? out : [{ label: '', body: text }]
-}
 
 export function App() {
   const [config, setConfig] = useState<AppConfig | null>(null)
@@ -113,10 +100,11 @@ export function App() {
   const [aircraft, setAircraft] = useState('placeholder')
   const [crowd, setCrowd] = useState('busy')
   const [env, setEnv] = useState('auto')
+  const [camera, setCamera] = useState('auto')
   const [hook, setHook] = useState(false)
   const [multiShot, setMultiShot] = useState(false)
   const [punchyOpen, setPunchyOpen] = useState(false)
-  const [tier1Only, setTier1Only] = useState(false)
+  const [region, setRegion] = useState('any')
   const [varyCoverage, setVaryCoverage] = useState(false)
   const [useTrends, setUseTrends] = useState(false)
   const [candidateMode, setCandidateMode] = useState(false)
@@ -136,6 +124,7 @@ export function App() {
   const [reachDraft, setReachDraft] = useState<ReachId | null>(null)
   const [excludeCoverage, setExcludeCoverage] = useState(false)
   const [toast, setToast] = useState('')
+  const [captioning, setCaptioning] = useState(false)
   const [showLearn, setShowLearn] = useState(false)
   const [filter, setFilter] = useState('toscore')
   const [logs, setLogs] = useState<LogLine[]>([])
@@ -153,7 +142,8 @@ export function App() {
       const cfg = await window.api.getConfig()
       setConfig(cfg)
       setScenario(cfg.defaults.scenario); setAircraft(cfg.defaults.aircraft); setCrowd(cfg.defaults.crowd)
-      setEnv(cfg.defaults.env); setExplore(cfg.defaults.explore); setHook(cfg.defaults.hook); setMultiShot(cfg.defaults.multiShot)
+      setEnv(cfg.defaults.env); setCamera(cfg.defaults.camera || 'auto')
+      setExplore(cfg.defaults.explore); setHook(cfg.defaults.hook); setMultiShot(cfg.defaults.multiShot)
       setHistory(await window.api.getHistory())
       setPlaybook(await window.api.getPlaybook())
     })()
@@ -167,9 +157,18 @@ export function App() {
     return off
   }, [])
 
-  const persist = useCallback(async (next: Entry[]) => {
-    setHistory(next)
-    try { await window.api.setHistory(next) } catch { /* ignore */ }
+  // Race-safe persistence: always derive the next history from the LATEST state
+  // via a functional update. Plain `persist([entry, ...history])` captured a
+  // stale `history` in async closures (e.g. the scene-identify callback after
+  // scoring), so a slow background step could silently clobber entries added
+  // in the meantime. The disk write rides inside the updater — idempotent, so
+  // a double-invoke in dev StrictMode is harmless.
+  const persist = useCallback((updater: (prev: Entry[]) => Entry[]) => {
+    setHistory((prev) => {
+      const next = updater(prev)
+      window.api.setHistory(next).catch(() => { /* ignore */ })
+      return next
+    })
   }, [])
 
   const rated = history.filter((h) => h.status === 'scored' && h.reach)
@@ -200,36 +199,75 @@ export function App() {
     } finally { setLearnCount((n) => Math.max(0, n - 1)) }
   }
 
+  // Entry factory from the current lever state — shared by generate and remix.
+  function buildEntry(resolved: Scenario, res: { text: string; title: string; filename: string }, extra: Partial<Entry> = {}): Entry {
+    return {
+      id: Date.now(), text: res.text, title: res.title, filename: res.filename,
+      scenario: resolved.label, scenarioId: resolved.id, aircraft, pickedAircraft: '', pickedEnv: '', crowd, env, camera, hook, multiShot, punchyOpen,
+      tier1Only: region === 'tier1', region, useTrends, nudge: nudge.trim(),
+      status: 'queued', postedAt: null, reach: null, tags: [], comment: '', ts: new Date().toISOString(),
+      ...extra,
+    }
+  }
+
+  function buildReq(resolved: Scenario) {
+    return { resolved, aircraft, crowd, env, camera, hook, multiShot, punchyOpen, tier1Only: region === 'tier1', region, varyCoverage, useTrends, explore, nudge }
+  }
+
+  function resetScoringDraft() {
+    setError(''); setLoading(true); setPickedTags([]); setComment(''); setReachDraft(null); setExcludeCoverage(false); setCandidates([])
+  }
+
   async function generate() {
     if (loading) return
-    setError(''); setLoading(true); setPickedTags([]); setComment(''); setReachDraft(null); setExcludeCoverage(false); setCandidates([])
+    resetScoringDraft()
     const pool = SCENARIOS.filter((s) => s.id !== 'random')
     const resolved = scenario === 'random' ? pool[Math.floor(Math.random() * pool.length)] : SCENARIOS.find((s) => s.id === scenario)!
-    const req = { resolved, aircraft, crowd, env, hook, multiShot, punchyOpen, tier1Only, varyCoverage, useTrends, explore, nudge }
-    const mk = (res: { text: string; title: string; filename: string }): Entry => ({
-      id: Date.now(), text: res.text, title: res.title, filename: res.filename,
-      scenario: resolved.label, scenarioId: resolved.id, aircraft, pickedAircraft: '', pickedEnv: '', crowd, env, hook, multiShot, punchyOpen,
-      status: 'queued', postedAt: null, reach: null, tags: [], comment: '', ts: new Date().toISOString(),
-    })
+    const req = buildReq(resolved)
     try {
       if (candidateMode) {
-        const got: Entry[] = []
-        for (let i = 0; i < 3; i++) {
-          try { got.push({ ...mk(await window.api.generate(req)), id: Date.now() + i }) } catch { /* skip this candidate */ }
-        }
-        if (!got.length) throw new Error('All candidate generations failed.')
-        setCandidates(got)
+        // ONE CLI call returns all candidates (separated server-side); titles
+        // are deferred — only the chosen one gets a title in chooseCandidate.
+        const results = await window.api.generateBatch({ ...req, skipTitle: true, candidates: 3 })
+        if (!results.length) throw new Error('Candidate generation failed.')
+        setCandidates(results.map((r, i) => ({ ...buildEntry(resolved, r), id: Date.now() + i })))
       } else {
-        const entry = mk(await window.api.generate(req))
-        setCurrent(entry); persist([entry, ...history])
+        const entry = buildEntry(resolved, await window.api.generate(req))
+        setCurrent(entry); persist((prev) => [entry, ...prev])
       }
     } catch (e: any) {
       setError(e?.message || 'Could not reach the model. Check Settings → Test connection.')
     } finally { setLoading(false) }
   }
 
-  function chooseCandidate(entry: Entry) {
-    setCandidates([]); setCurrent(entry); persist([entry, ...history])
+  // Double down on a proven winner: fresh prompt that keeps its winning
+  // ingredients but changes aircraft/setting so it never reads as a repost.
+  async function remixWinner(source: Entry) {
+    if (loading) return
+    resetScoringDraft()
+    const pool = SCENARIOS.filter((s) => s.id !== 'random')
+    const resolved = SCENARIOS.find((s) => s.id === source.scenarioId) || pool[Math.floor(Math.random() * pool.length)]
+    try {
+      const res = await window.api.generate({ ...buildReq(resolved), remixText: source.text })
+      const entry = buildEntry(resolved, res, { remixOf: source.id })
+      setCurrent(entry); persist((prev) => [entry, ...prev])
+      flashToast('Remix ready ✓')
+    } catch (e: any) {
+      setError(e?.message || 'Could not reach the model. Check Settings → Test connection.')
+    } finally { setLoading(false) }
+  }
+
+  async function chooseCandidate(entry: Entry) {
+    setCandidates([]); setCurrent(entry); persist((prev) => [entry, ...prev])
+    // Candidate generations skip the title step; write one now for the winner.
+    if (config?.titleEnabled && !entry.title) {
+      try {
+        const t = await window.api.title({ text: entry.text, avoid: titleAvoidList() })
+        const withTitle: Entry = { ...entry, title: t, filename: toFilename(t || entry.scenario) }
+        setCurrent((c) => (c && c.id === entry.id ? withTitle : c))
+        persist((prev) => prev.map((h) => (h.id === entry.id ? withTitle : h)))
+      } catch { /* keep it untitled — "New title" can retry */ }
+    }
   }
 
   // Ctrl/Cmd+Enter generates from anywhere. A ref keeps the handler pointed at
@@ -251,7 +289,7 @@ export function App() {
     if (!current) return
     const updated: Entry = { ...current, comment: comment.trim(), tags: pickedTags, ...patch }
     setCurrent(updated)
-    persist(history.map((h) => (h.id === current.id ? updated : h)))
+    persist((prev) => prev.map((h) => (h.id === current.id ? updated : h)))
   }
 
   // The explicit submit: commit the full draft (tier + comment + flags) once,
@@ -261,8 +299,7 @@ export function App() {
     const excl = excludeCoverage
     const updated: Entry = { ...current, comment: comment.trim(), tags: pickedTags, reach: reachDraft, status: 'scored', excludeCoverage: excl }
     setCurrent(updated)
-    const next = history.map((h) => (h.id === current.id ? updated : h))
-    persist(next)
+    persist((prev) => prev.map((h) => (h.id === current.id ? updated : h)))
     // Immediate confirmation, then learning runs in the background (not awaited)
     // so you can keep working straight away.
     if (config.autoLearn) flashToast('Saved ✓ — teaching the playbook in the background')
@@ -275,7 +312,7 @@ export function App() {
         if (scene && (scene.aircraft || scene.environment)) {
           const withScene: Entry = { ...updated, pickedAircraft: updated.pickedAircraft || scene.aircraft || '', pickedEnv: scene.environment || '' }
           setCurrent((c) => (c && c.id === withScene.id ? withScene : c))
-          persist(next.map((h) => (h.id === withScene.id ? withScene : h)))
+          persist((prev) => prev.map((h) => (h.id === withScene.id ? withScene : h)))
         }
       } catch { /* best-effort — coverage just won't record this one */ }
     }
@@ -285,7 +322,7 @@ export function App() {
     if (!current) return
     const updated = { ...current, ...patch }
     setCurrent(updated)
-    persist(history.map((h) => (h.id === current.id ? updated : h)))
+    persist((prev) => prev.map((h) => (h.id === current.id ? updated : h)))
   }
 
   function titleAvoidList(extra?: string) {
@@ -302,6 +339,15 @@ export function App() {
     } catch { /* ignore */ }
   }
 
+  async function writeCaption() {
+    if (!current || captioning) return
+    setCaptioning(true)
+    try {
+      const c = await window.api.caption({ text: current.text, title: current.title || '' })
+      if (c) patchCurrent({ caption: c })
+    } catch { flashToast('Caption step failed — try again') } finally { setCaptioning(false) }
+  }
+
   async function clearAll() {
     try { await window.api.resetMemory() } catch { /* ignore */ }
     setHistory([]); setCurrent(null); setPlaybook('')
@@ -310,7 +356,7 @@ export function App() {
   const count = current ? current.text.length : 0
   const charLimit = config?.charLimit ?? 1500
   const over = count > charLimit
-  const sections = current ? splitForView(current.text) : null
+  const sections = current ? splitSections(current.text) : null
   const cur = current ? history.find((h) => h.id === current.id) || current : null
 
   let listView = [...history]
@@ -382,6 +428,7 @@ export function App() {
             <div><div style={lbl}>Aircraft</div><select value={aircraft} onChange={(e) => setAircraft(e.target.value)} style={sel}>{AIRCRAFT.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}</select></div>
             <div><div style={lbl}>Crowd density</div><select value={crowd} onChange={(e) => setCrowd(e.target.value)} style={sel}>{CROWD.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</select></div>
             <div><div style={lbl}>Environment</div><select value={env} onChange={(e) => setEnv(e.target.value)} style={sel}>{ENV.map((e2) => <option key={e2.id} value={e2.id}>{e2.label}</option>)}</select></div>
+            <div><div style={lbl}>Camera identity</div><select value={camera} onChange={(e) => setCamera(e.target.value)} style={sel}>{CAMERA.map((c2) => <option key={c2.id} value={c2.id}>{c2.label}</option>)}</select></div>
 
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, border: `1px solid ${hook ? ACCENT : LINE}`, borderRadius: 10, padding: '10px 14px', background: hook ? '#FBEADF' : '#fff' }}>
               <div>
@@ -401,10 +448,11 @@ export function App() {
               <span><span style={{ fontWeight: 600 }}>Punchy 3-sec open.</span> <span style={{ color: MUTE }}>Engineer a scroll-stopping first second.</span></span>
             </label>
 
-            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: aircraft === 'placeholder' ? 'not-allowed' : 'pointer', fontSize: 13, opacity: aircraft === 'placeholder' ? 0.5 : 1 }}>
-              <input type="checkbox" checked={tier1Only} disabled={aircraft === 'placeholder'} onChange={(e) => setTier1Only(e.target.checked)} style={{ width: 16, height: 16, accentColor: ACCENT, flexShrink: 0 }} />
-              <span><span style={{ fontWeight: 600 }}>Tier-1 countries only.</span> <span style={{ color: MUTE }}>Airline/operator from USA, Canada, UK, Australia, NZ only — steers off repeats like ANA.</span></span>
-            </label>
+            <div style={{ opacity: aircraft === 'placeholder' ? 0.5 : 1 }}>
+              <div style={lbl}>Operator region</div>
+              <select value={region} disabled={aircraft === 'placeholder'} onChange={(e) => setRegion(e.target.value)} style={sel}>{REGION.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}</select>
+              <div style={{ fontSize: 11.5, color: MUTE, marginTop: 4 }}>Hard restriction on the airline/operator's home region — steers off repeats like ANA.</div>
+            </div>
 
             <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13 }}>
               <input type="checkbox" checked={varyCoverage} onChange={(e) => setVaryCoverage(e.target.checked)} style={{ width: 16, height: 16, accentColor: ACCENT, flexShrink: 0 }} />
@@ -473,7 +521,7 @@ export function App() {
                       </span>
                     </div>
                     <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, monospace', fontSize: 12, lineHeight: 1.6, color: SCREEN_TX, whiteSpace: 'pre-wrap', maxHeight: 200, overflowY: 'auto' }}>
-                      {splitForView(c.text).map((s, j) => <div key={j} style={{ marginBottom: 8 }}><span style={{ color: ACCENT, fontWeight: 600 }}>{s.label}</span>{s.body}</div>)}
+                      {splitSections(c.text).map((s, j) => <div key={j} style={{ marginBottom: 8 }}><span style={{ color: ACCENT, fontWeight: 600 }}>{s.label}</span>{s.body}</div>)}
                     </div>
                   </div>
                 ))}
@@ -509,6 +557,18 @@ export function App() {
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <code style={{ flex: 1, fontFamily: 'ui-monospace, monospace', fontSize: 12.5, color: MUTE, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{current.filename || '—'}</code>
                   <CopyBtn text={current.filename || ''} style={{ ...ghostBtn, padding: '7px 12px', fontSize: 12.5, flexShrink: 0 }} />
+                </div>
+                <div style={{ borderTop: `1px solid ${LINE}`, paddingTop: 10, marginTop: 10 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: current.caption ? 8 : 0 }}>
+                    <div style={{ ...lbl, marginBottom: 0 }}>Caption + hashtags</div>
+                    <button onClick={writeCaption} disabled={captioning} style={{ ...ghostBtn, padding: '5px 11px', fontSize: 12.5, opacity: captioning ? 0.6 : 1 }}>{captioning ? 'Writing…' : current.caption ? 'New caption' : 'Write caption'}</button>
+                  </div>
+                  {current.caption && (
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                      <div style={{ flex: 1, fontSize: 13, lineHeight: 1.55, whiteSpace: 'pre-wrap', minWidth: 0 }}>{current.caption}</div>
+                      <CopyBtn text={current.caption} style={{ ...ghostBtn, padding: '7px 12px', fontSize: 12.5, flexShrink: 0 }} />
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -561,6 +621,9 @@ export function App() {
                 </div>
 
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', borderTop: `1px solid ${LINE}`, paddingTop: 12, marginTop: 12 }}>
+                  {cur && cur.status === 'scored' && (cur.reach === 'good' || cur.reach === 'viral') && (
+                    <button onClick={() => remixWinner(cur)} title="Generate a fresh prompt that keeps this winner's ingredients but changes the aircraft/setting" style={{ ...ghostBtn, color: ACCENT, borderColor: ACCENT, fontWeight: 600 }}>↻ Remix this winner</button>
+                  )}
                   {cur && cur.status !== 'scored' && <button onClick={() => updateEntry({ status: 'posted', postedAt: (cur && cur.postedAt) || Date.now() })} style={ghostBtn}>Mark as posted</button>}
                   <button onClick={() => updateEntry({ status: 'skipped' })} style={{ ...ghostBtn, color: MUTE }}>Couldn't use this one</button>
                 </div>

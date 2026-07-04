@@ -26,7 +26,7 @@ src/
   preload/
     index.ts     contextBridge — the typed `window.api` surface (the ONLY main↔renderer bridge)
   shared/        imported by BOTH main and renderer — keep it dependency-free
-    domain.ts    lever option lists (AIRCRAFT, CROWD, ENV, SCENARIOS, REACH, ILLUSION_TAGS)
+    domain.ts    lever option lists (AIRCRAFT, CAMERA, CROWD, ENV, REGION, SCENARIOS, REACH, ILLUSION_TAGS)
     prompts.ts   ALL prompt templates + message builders (the product's real IP)
     types.ts     shared TypeScript interfaces
     util.ts      cleanTitle, toFilename, clampPlaybook
@@ -62,8 +62,9 @@ The engine has **NO list of airlines**. `domain.ts` only has broad *categories*
 specific airline/aircraft is chosen **by the AI model itself** from a text
 instruction. Bias toward repeat carriers (e.g. ANA) is inherent LLM behavior;
 it's countered with soft nudges ("range widely", per-scenario avoid lists, the
-playbook) and one hard lever: **Tier-1 countries only** (see `TIER1_COUNTRIES`
-in prompts.ts), which restricts the operator to US/Canada/UK/Australia/NZ.
+playbook) and one hard lever: **Operator region** (`REGION` in domain.ts) —
+`tier1` restricts the operator to US/Canada/UK/Australia/NZ (`TIER1_COUNTRIES`
+in prompts.ts), `europe` to European carriers (`EUROPE_EXAMPLES`).
 
 ## Adding a new lever (the common task)
 

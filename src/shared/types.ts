@@ -28,6 +28,20 @@ export interface Entry {
   pickedAircraft?: string
   /** The environment/setting the rendered clip actually used, e.g. "grass farmland field", "coastal". Recorded on a Good/Viral score for coverage. */
   pickedEnv?: string
+  /** Camera identity lever used for this clip ('auto' | 'phone' | 'longlens' | 'broadcast'). Feeds the learner. */
+  camera?: string
+  /** Whether the Tier-1 countries restriction was on — evidence for the learner (the aircraft pick wasn't free). */
+  tier1Only?: boolean
+  /** Operator-region lever: 'any' | 'tier1' | 'europe'. Supersedes tier1Only (kept for old entries). */
+  region?: string
+  /** Social caption + hashtags written for this clip (on demand). */
+  caption?: string
+  /** id of the Good/Viral entry this one was remixed from — evidence for the learner. */
+  remixOf?: number
+  /** Whether the trends digest was injected for this generation. */
+  useTrends?: boolean
+  /** The user's one-off direction for this prompt — key evidence for the learner (overrides the levers). */
+  nudge?: string
   /** User opt-out: when true, this entry is never added to airline coverage, even on a Good/Viral score. */
   excludeCoverage?: boolean
   crowd: string
@@ -49,17 +63,27 @@ export interface GenerateRequest {
   aircraft: string
   crowd: string
   env: string
+  /** Camera identity: 'auto' (Claude decides) | 'phone' | 'longlens' | 'broadcast'. */
+  camera?: string
   hook: boolean
   multiShot: boolean
   punchyOpen: boolean
-  /** Opt-in: restrict the aircraft's airline/operator to Tier-1 (Western developed) countries, e.g. to steer away from repeat picks like ANA. */
+  /** Opt-in: restrict the aircraft's airline/operator to Tier-1 (Western developed) countries, e.g. to steer away from repeat picks like ANA. Kept for back-compat; derived from region === 'tier1'. */
   tier1Only: boolean
+  /** Operator-region restriction: 'any' (default) | 'tier1' (US/CA/UK/AU/NZ) | 'europe'. */
+  region?: string
+  /** Remix mode: the full text of a proven winner to rework — keep its winning ingredients, change the surface. */
+  remixText?: string
+  /** Ask for N distinct prompts in ONE CLI call (candidate mode). 1 or absent = normal single prompt. */
+  candidates?: number
   /** Opt-in: feed recent Good/Viral environments for this scenario so the engine varies the setting. */
   varyCoverage: boolean
   /** Opt-in: inject the current trends digest so the engine can ride what's hot. */
   useTrends: boolean
   explore: number
   nudge: string
+  /** Skip the SEO-title step for this call (candidate mode generates the title only for the chosen one). */
+  skipTitle?: boolean
 }
 
 export interface GenerateResult {
@@ -86,6 +110,7 @@ export interface AppConfig {
     aircraft: string
     crowd: string
     env: string
+    camera?: string
     explore: number
     hook: boolean
     multiShot: boolean

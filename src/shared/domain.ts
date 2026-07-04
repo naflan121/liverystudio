@@ -25,6 +25,24 @@ export const AIRCRAFT = [
   { id: 'surprise', label: 'Claude picks: surprise me' },
 ]
 
+// Camera identity — who is "holding the camera". A huge authenticity lever for
+// the "is this real?" illusion: casual bystander phone footage reads as genuine
+// eyewitness video, planespotter glass reads as avgeek content.
+export const CAMERA = [
+  { id: 'auto', label: 'Let Claude decide' },
+  { id: 'phone', label: 'Bystander phone (handheld)' },
+  { id: 'longlens', label: 'Planespotter long lens' },
+  { id: 'broadcast', label: 'Airshow broadcast cam' },
+]
+
+// Operator region restriction for the airline/operator pick. 'tier1' is the
+// original hard lever (US/CA/UK/AU/NZ); 'europe' is its European counterpart.
+export const REGION = [
+  { id: 'any', label: 'Any region (Claude decides)' },
+  { id: 'tier1', label: 'Tier-1 only (US · CA · UK · AU · NZ)' },
+  { id: 'europe', label: 'Europe only' },
+]
+
 export const CROWD = [
   { id: 'auto', label: 'Let Claude decide' },
   { id: 'solo', label: 'Solo / quiet field' },

@@ -3,10 +3,10 @@ import path from 'node:path'
 import { callClaude, testCli } from './claude'
 import {
   getConfig, setConfig, getHistory, setHistory, getPlaybook, setPlaybook,
-  appendLearningLog, getLearningLog, resetMemory, dataDir, setDataDir,
+  getPlaybookVersions, appendLearningLog, getLearningLog, resetMemory, dataDir, setDataDir,
   getTrends, setTrends,
 } from './store'
-import { SYSTEM, TITLE_SYSTEM, LEARN_SYSTEM, EXTRACT_SYSTEM, TREND_SYSTEM, buildUserMessage, titleMsg, buildLearnMessage, buildRedistillMessage, extractMsg, parseScene, trendsMsg } from '../shared/prompts'
+import { SYSTEM, TITLE_SYSTEM, LEARN_SYSTEM, EXTRACT_SYSTEM, TREND_SYSTEM, CAPTION_SYSTEM, buildUserMessage, titleMsg, captionMsg, buildLearnMessage, buildRedistillMessage, extractMsg, parseScene, trendsMsg, parseVariants } from '../shared/prompts'
 import { cleanTitle, toFilename, clampPlaybook } from '../shared/util'
 import type { GenerateRequest, Entry, LogLevel } from '../shared/types'
 
@@ -108,8 +108,9 @@ function registerIpc(): void {
   ipcMain.handle('history:set', (_e, entries: Entry[]) => { setHistory(entries); return true })
   ipcMain.handle('playbook:get', () => getPlaybook())
   ipcMain.handle('playbook:set', (_e, text: string) => { setPlaybook(text); return true })
+  ipcMain.handle('playbook:versions', () => getPlaybookVersions())
   ipcMain.handle('learning:log', () => getLearningLog())
-  ipcMain.handle('cli:test', () => testCli(getConfig().cliPath))
+  ipcMain.handle('cli:test', () => { const cfg = getConfig(); return testCli(cfg.cliPath, cfg.generationModel) })
   ipcMain.handle('memory:reset', () => { resetMemory(); return true })
   ipcMain.handle('data:open', () => shell.openPath(dataDir()))
   ipcMain.handle('data:getDir', () => dataDir())
@@ -132,19 +133,29 @@ function registerIpc(): void {
     const levers = [
       req.resolved.label,
       req.aircraft, `crowd:${req.crowd}`, `env:${req.env}`,
+      req.camera && req.camera !== 'auto' ? `cam:${req.camera}` : null,
       req.hook ? 'hook' : null, req.multiShot ? 'multi-shot' : null,
       `explore:${req.explore}`,
     ].filter(Boolean).join(' · ')
     emitLog('step', `Generating — ${levers}`)
+    if (req.remixText && req.remixText.trim()) emitLog('info', 'Remix mode: reworking a proven winner — same ingredients, fresh surface.')
     if (req.nudge && req.nudge.trim()) emitLog('info', `Direction this one: "${req.nudge.trim()}"`)
     emitLog('info', `Playbook attached: ${playbook.length} chars · history: ${history.length} entries`)
 
     const avoidCombos = req.aircraft !== 'placeholder' ? recentCombos(history, req.resolved.id) : []
     const avoidEnvs = req.varyCoverage && req.env === 'auto' ? recentEnvs(history, req.resolved.id) : []
-    const trends = req.useTrends ? getTrends().text : ''
+    const trendsData = req.useTrends ? getTrends() : { text: '', updatedAt: '' }
+    const trends = trendsData.text
     if (avoidCombos.length) emitLog('info', `Steering clear of ${avoidCombos.length} aircraft that already did well for ${req.resolved.label}.`)
     if (avoidEnvs.length) emitLog('info', `Varying away from ${avoidEnvs.length} recent setting(s) for ${req.resolved.label}.`)
-    if (req.useTrends) emitLog('info', trends ? `Trends digest attached: ${trends.length} chars.` : 'Use-trends is on but no digest saved yet — refresh it in Settings.')
+    if (req.useTrends) {
+      if (!trends) emitLog('warn', 'Use-trends is on but no digest saved yet — refresh it in Settings.')
+      else {
+        const ageDays = trendsData.updatedAt ? Math.floor((Date.now() - new Date(trendsData.updatedAt).getTime()) / 86400000) : 0
+        if (ageDays >= 7) emitLog('warn', `Trends digest attached but it is ${ageDays} days old — stale trends can hurt more than help. Refresh it in Settings.`)
+        else emitLog('info', `Trends digest attached: ${trends.length} chars.`)
+      }
+    }
 
     let text = await callClaude(buildUserMessage(req, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends), { ...base, system: SYSTEM, label: 'prompt' })
     if (text.length > cfg.charLimit) {
@@ -153,10 +164,11 @@ function registerIpc(): void {
         `This prompt is ${text.length} characters, over the ${cfg.charLimit} limit. Rewrite under ${cfg.targetMax}, keeping all three sections and every required Negative term. Output only the prompt:\n\n${text}`,
         { ...base, system: SYSTEM, label: 'rewrite' },
       )
+      if (text.length > cfg.charLimit) emitLog('warn', `Still over the limit after the rewrite (${text.length} chars) — trim by hand or regenerate.`)
     }
 
     let title = ''
-    if (cfg.titleEnabled) {
+    if (cfg.titleEnabled && !req.skipTitle) {
       emitLog('step', 'Writing a title…')
       try {
         title = cleanTitle(
@@ -170,6 +182,40 @@ function registerIpc(): void {
     const filename = toFilename(title || req.resolved.label)
     emitLog('ok', 'Prompt ready — added to the queue.')
     return { text, title, filename }
+  }))
+
+  // Candidate mode: N distinct prompts from ONE CLI call (separated by =====).
+  // Roughly 3x faster and cheaper than three sequential generations, and the
+  // model makes the options genuinely different because it writes them together.
+  ipcMain.handle('generate:batch', (_e, req: GenerateRequest) => exclusive(async () => {
+    const cfg = getConfig()
+    const playbook = getPlaybook()
+    const history = getHistory()
+    const n = Math.min(Math.max(req.candidates || 3, 2), 4)
+    const base = { cliPath: cfg.cliPath, model: cfg.generationModel, timeoutMs: Math.max(cfg.timeoutMs, 240000), onLog: claudeLog }
+    emitLog('step', `Generating ${n} candidates in one call — ${req.resolved.label}`)
+    const avoidCombos = req.aircraft !== 'placeholder' ? recentCombos(history, req.resolved.id) : []
+    const avoidEnvs = req.varyCoverage && req.env === 'auto' ? recentEnvs(history, req.resolved.id) : []
+    const trends = req.useTrends ? getTrends().text : ''
+    const raw = await callClaude(buildUserMessage({ ...req, candidates: n }, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends), { ...base, system: SYSTEM, label: 'candidates' })
+    const variants = parseVariants(raw).slice(0, n)
+    for (const v of variants) {
+      if (v.length > cfg.charLimit) emitLog('warn', `A candidate is over the limit (${v.length} chars) — pick a different one or regenerate.`)
+    }
+    emitLog('ok', `${variants.length} candidate prompt(s) ready — pick one.`)
+    // Titles are written only for the chosen candidate (renderer side).
+    return variants.map((text) => ({ text, title: '', filename: toFilename(req.resolved.label) }))
+  }))
+
+  // Social caption + hashtags for a finished prompt — on demand from the UI.
+  ipcMain.handle('caption', (_e, payload: { text: string; title: string }) => exclusive(async () => {
+    const cfg = getConfig()
+    emitLog('step', 'Writing a caption + hashtags…')
+    const c = (await callClaude(captionMsg(payload.text, payload.title || ''), {
+      cliPath: cfg.cliPath, model: cfg.generationModel, timeoutMs: cfg.timeoutMs, system: CAPTION_SYSTEM, label: 'caption', onLog: claudeLog,
+    })).trim()
+    if (c) emitLog('ok', 'Caption ready.')
+    return c
   }))
 
   // Extract scene facts (aircraft + environment) from a finished prompt. Called
@@ -249,6 +295,15 @@ function registerIpc(): void {
       before: before.length,
       after: next.length,
     })
+    // Drift check: one-at-a-time merges slowly accumulate bias. After enough
+    // results since the last full rebuild (reach === null marks a re-distill),
+    // nudge the user toward "Re-distill from all history" in Settings.
+    const log = getLearningLog()
+    let sinceRebuild = 0
+    for (let i = log.length - 1; i >= 0; i--) { if (log[i].reach === null) break; sinceRebuild++ }
+    if (sinceRebuild >= 15 && sinceRebuild % 5 === 0) {
+      emitLog('info', `${sinceRebuild} results folded in since the last full re-distill — consider "Re-distill from all history" in Settings to clear accumulated drift.`)
+    }
     return { playbook: next }
   }))
 
@@ -286,7 +341,7 @@ function registerIpc(): void {
     emitLog('step', 'Researching current trends on the web…')
     try {
       const text = await callClaude(trendsMsg(), {
-        cliPath: cfg.cliPath, model: 'claude-sonnet-4-6', timeoutMs: Math.max(cfg.timeoutMs, 180000),
+        cliPath: cfg.cliPath, model: cfg.generationModel, timeoutMs: Math.max(cfg.timeoutMs, 180000),
         system: TREND_SYSTEM, label: 'trends', onLog: claudeLog, allowedTools: ['WebSearch', 'WebFetch'],
       })
       const saved = setTrends(text)
