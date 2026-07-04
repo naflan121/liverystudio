@@ -3,7 +3,7 @@ import {
   INK, PAPER, LINE, MUTE, ACCENT, GOOD, BAD, VIRAL, WAIT, SCREEN, SCREEN_TX, lbl, sel, ghostBtn, primaryBtn, card,
 } from './ui'
 import { REACH, ILLUSION_TAGS, AIRCRAFT, CAMERA, CROWD, ENV, REGION, SCENARIOS, groupScenarios } from '@shared/domain'
-import { snippet, toFilename, splitSections } from '@shared/util'
+import { snippet, toFilename, splitSections, parseViews } from '@shared/util'
 import type { AppConfig, Entry, ReachId, LogLine, LogLevel, Scenario } from '@shared/types'
 import { Settings } from './Settings'
 
@@ -107,6 +107,7 @@ export function App() {
   const [region, setRegion] = useState('any')
   const [varyCoverage, setVaryCoverage] = useState(false)
   const [useTrends, setUseTrends] = useState(false)
+  const [boost, setBoost] = useState(false)
   const [candidateMode, setCandidateMode] = useState(false)
   const [candidates, setCandidates] = useState<Entry[]>([])
   const [nudge, setNudge] = useState('')
@@ -122,6 +123,7 @@ export function App() {
   const [pickedTags, setPickedTags] = useState<string[]>([])
   const [comment, setComment] = useState('')
   const [reachDraft, setReachDraft] = useState<ReachId | null>(null)
+  const [viewsDraft, setViewsDraft] = useState('')
   const [excludeCoverage, setExcludeCoverage] = useState(false)
   const [toast, setToast] = useState('')
   const [captioning, setCaptioning] = useState(false)
@@ -204,18 +206,18 @@ export function App() {
     return {
       id: Date.now(), text: res.text, title: res.title, filename: res.filename,
       scenario: resolved.label, scenarioId: resolved.id, aircraft, pickedAircraft: '', pickedEnv: '', crowd, env, camera, hook, multiShot, punchyOpen,
-      tier1Only: region === 'tier1', region, useTrends, nudge: nudge.trim(),
+      tier1Only: region === 'tier1', region, useTrends, nudge: nudge.trim(), boost,
       status: 'queued', postedAt: null, reach: null, tags: [], comment: '', ts: new Date().toISOString(),
       ...extra,
     }
   }
 
   function buildReq(resolved: Scenario) {
-    return { resolved, aircraft, crowd, env, camera, hook, multiShot, punchyOpen, tier1Only: region === 'tier1', region, varyCoverage, useTrends, explore, nudge }
+    return { resolved, aircraft, crowd, env, camera, hook, multiShot, punchyOpen, tier1Only: region === 'tier1', region, varyCoverage, useTrends, explore, nudge, boost }
   }
 
   function resetScoringDraft() {
-    setError(''); setLoading(true); setPickedTags([]); setComment(''); setReachDraft(null); setExcludeCoverage(false); setCandidates([])
+    setError(''); setLoading(true); setPickedTags([]); setComment(''); setReachDraft(null); setExcludeCoverage(false); setViewsDraft(''); setCandidates([])
   }
 
   async function generate() {
@@ -282,7 +284,7 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  function openEntry(h: Entry) { setCurrent(h); setPickedTags(h.tags || []); setComment(h.comment || ''); setReachDraft(h.reach || null); setExcludeCoverage(!!h.excludeCoverage) }
+  function openEntry(h: Entry) { setCurrent(h); setPickedTags(h.tags || []); setComment(h.comment || ''); setReachDraft(h.reach || null); setExcludeCoverage(!!h.excludeCoverage); setViewsDraft(typeof h.views === 'number' ? String(h.views) : '') }
 
   // Save without learning — used for posted / skipped / restore.
   function updateEntry(patch: Partial<Entry>) {
@@ -297,7 +299,7 @@ export function App() {
   async function submitScore() {
     if (!current || !reachDraft) return
     const excl = excludeCoverage
-    const updated: Entry = { ...current, comment: comment.trim(), tags: pickedTags, reach: reachDraft, status: 'scored', excludeCoverage: excl }
+    const updated: Entry = { ...current, comment: comment.trim(), tags: pickedTags, reach: reachDraft, status: 'scored', excludeCoverage: excl, views: parseViews(viewsDraft) }
     setCurrent(updated)
     persist((prev) => prev.map((h) => (h.id === current.id ? updated : h)))
     // Immediate confirmation, then learning runs in the background (not awaited)
@@ -464,6 +466,11 @@ export function App() {
               <span><span style={{ fontWeight: 600 }}>Use current trends.</span> <span style={{ color: MUTE }}>Ride what's hot. Refresh the digest in Settings.</span></span>
             </label>
 
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13, border: `1px solid ${boost ? ACCENT : LINE}`, borderRadius: 10, padding: '9px 12px', background: boost ? '#FBEADF' : '#fff' }}>
+              <input type="checkbox" checked={boost} onChange={(e) => setBoost(e.target.checked)} style={{ width: 16, height: 16, accentColor: ACCENT, flexShrink: 0 }} />
+              <span><span style={{ fontWeight: 600 }}>Reach Boost 📈</span> <span style={{ color: MUTE }}>Ceiling-attempt biases from the performance report (tarmac, widebody, centerline/rotation). A/B-tracked in Settings — untick to get the exact old behavior.</span></span>
+            </label>
+
             <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13 }}>
               <input type="checkbox" checked={candidateMode} onChange={(e) => setCandidateMode(e.target.checked)} style={{ width: 16, height: 16, accentColor: ACCENT, flexShrink: 0 }} />
               <span><span style={{ fontWeight: 600 }}>Generate 3 to choose from.</span> <span style={{ color: MUTE }}>Slower; you pick one, the rest are discarded.</span></span>
@@ -587,8 +594,13 @@ export function App() {
 
                 {/* Step 1 — how far it reached (selection only; nothing commits yet) */}
                 <div style={{ fontSize: 12, color: MUTE, marginBottom: 7, fontWeight: 600 }}>1 · How far did it reach?</div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
                   {REACH.map((r) => { const on = reachDraft === r.id; return <button key={r.id} onClick={() => setReachDraft(r.id)} style={{ flex: '1 1 auto', minWidth: 90, borderRadius: 9, padding: '10px 12px', fontSize: 13.5, fontWeight: 600, cursor: 'pointer', border: `1px solid ${r.color}`, background: on ? r.color : '#fff', color: on ? '#fff' : r.color }}>{r.label}</button> })}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                  <span style={{ fontSize: 12, color: MUTE }}>All-time views (optional):</span>
+                  <input value={viewsDraft} onChange={(e) => setViewsDraft(e.target.value)} placeholder="e.g. 1.2m or 300k" style={{ width: 150, padding: '7px 10px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 13, background: '#fff', color: INK }} />
+                  <span style={{ fontSize: 11.5, color: MUTE }}>hard data for the next analysis round</span>
                 </div>
 
                 {/* Step 2 — what to teach it */}

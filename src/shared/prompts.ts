@@ -1,5 +1,6 @@
 import type { GenerateRequest, Entry } from './types'
 import { ENV, REACH } from './domain'
+import { fmtViews } from './util'
 
 export const SYSTEM = `You write image-to-video prompts for Seedance 2.0. The footage is RC scale-model aircraft, filmed so it looks like genuine full-size real-world aviation video — the "is this real?" illusion. The ultimate goal is REACH on short-form social video; photorealism is your main tool for that. You may sometimes be explicitly asked to add one photoreal-but-impossible "hook" detail — when given that instruction, follow it; otherwise keep everything anatomically real.
 
@@ -15,6 +16,7 @@ SCALE-ILLUSION RULES:
 - Keep adult spectators and scale-reference objects in frame throughout.
 - RC PILOT (always, for any flying scene): include an RC pilot in frame — a figure wearing FPV goggles and holding an RC transmitter — positioned behind the model or at the crowd line where it reads naturally. This is a key authenticity and scale cue.
 - RC physics cues: lightweight foam-and-plastic airframe, slight wobble, brushless-motor behaviour.
+- REVEAL EXCEPTION: only when the user message explicitly instructs you to hide the scale, omit the scale anchors, spectators and RC-pilot cues and keep the framing distant and ambiguous — the "is it real?" debate is the hook. Without that explicit instruction, every scale rule above is mandatory.
 
 AERODYNAMIC REALISM (when the scene involves flight):
 - Takeoff (critical — the model must NOT rise like a helicopter): open with a long, EXTENDED real-time ground roll that dominates most of the clip — wheels rolling on the surface, tail low, nose gear compressed, speed building gradually across a long stretch of runway; the model stays firmly on the ground for a sustained run and reaches the rotation point (V1/Vr) only late in the clip, at which point the nose lifts and the mains leave the surface; then a shallow forward climb where forward speed stays clearly greater than climb rate, with slight wing rock and a pitch bobble. The ground run must take up most of the shot. No instant or early liftoff, no vertical rise, no hovering, no climbing in place. For any takeoff or climb-out, the Negative section must ALSO include: helicopter motion, vertical takeoff, climbing without forward motion, hovering, early liftoff, short ground roll, steep climb, slow motion, direction reversal.
@@ -117,7 +119,8 @@ export function buildUserMessage(req: GenerateRequest, playbook: string, extraNe
   const parts: string[] = []
 
   let sc = `Scenario: ${resolved.brief || 'Choose a strong scenario yourself.'}`
-  if (!['boneyard', 'assembly'].includes(resolved.id)) {
+  // distant_reveal hides the scale — a crowd in frame would defeat the point.
+  if (!['boneyard', 'assembly', 'distant_reveal'].includes(resolved.id)) {
     sc += ' ' + (crowd === 'solo'
       ? 'Keep it a quiet solo session, a few people at most.'
       : crowd === 'packed'
@@ -177,6 +180,13 @@ export function buildUserMessage(req: GenerateRequest, playbook: string, extraNe
     : 'CAMERA IDENTITY: YOU choose who is holding the camera — bystander smartphone (handheld micro-shake, eyewitness feel — often the strongest "is this real?" cue), planespotter super-telephoto (compression, tripod pan), or an airshow broadcast camera — pick whichever sells the illusion hardest for THIS scenario and vary it across clips. Commit to ONE camera identity and keep it consistent for the whole clip.')
 
   parts.push('AUDIENCE PATTERNS for this page (weight these): 1) recognisable commercial airliners and famous liveries get the most reach; 2) crowds and airshow settings increase reach; 3) the goal is reach, with realism as the main tool.')
+
+  // Reach Boost — opt-in ceiling-attempt biases distilled from the page's
+  // all-time performance analysis (docs/rc_performance_analysis.md). Prompt
+  // guidance only, no engine-side lists; hard constraints above still win.
+  if (req.boost) {
+    parts.push(`REACH BOOST (ceiling attempt): this clip is a deliberate attempt at breakout reach. A study of this page's all-time results shows what carries the highest ceiling, so bias every choice the levers above leave OPEN toward: a recognisable commercial airliner in a real major-airline livery (over military or warbird); a widebody or large narrowbody — A380/747/757/A320 class — over small sport types; a paved tarmac runway over grass; a takeoff-rotation or touchdown payoff over taxiing; and a composition built on the runway centerline (the model tracking straight along the line, growing or shrinking in frame) or on the rotation moment caught low from the side, nose up, gear still extended. These are biases, not overrides: the scenario, any operator-region restriction, the avoid lists and the user direction all still win where they conflict.`)
+  }
 
   parts.push(hook
     ? "HOOK MODE ON: introduce exactly ONE plausible-but-impossible structural feature for a 'wait, what is that?' double-take — e.g. two airliner airframes blended (an A380 nose on a 747 body), a stretched extra fuselage section, or an extra engine. It must look fully photoreal and physically built, NOT a CGI glitch, blur, or cartoon. Keep everything else realistic and all audio/Negative rules intact. Make the oddity subtle enough that viewers argue over whether it is real."
@@ -243,7 +253,7 @@ export function buildRedistillMessage(entries: Entry[], budget: number): string 
     const comment = e.comment && e.comment.trim() ? `"${e.comment.trim()}"` : 'none'
     const winner = e.reach === 'good' || e.reach === 'viral'
     const region = e.region || (e.tier1Only ? 'tier1' : '')
-    const head = `${i + 1}. [${reach}] ${e.scenario} · aircraft:${e.aircraft}${e.pickedAircraft ? ` (${e.pickedAircraft})` : ''} · crowd:${e.crowd} · env:${e.env}${e.camera && e.camera !== 'auto' ? ` · cam:${e.camera}` : ''}${region && region !== 'any' ? ` · region:${region}` : ''}${e.remixOf ? ' · remix-of-winner' : ''}${e.hook ? ' · hook' : ''}${e.multiShot ? ' · multi-shot' : ''}${e.punchyOpen ? ' · punchy-open' : ''}${e.nudge && e.nudge.trim() ? ` · user direction:"${e.nudge.trim().slice(0, 80)}"` : ''}`
+    const head = `${i + 1}. [${reach}${typeof e.views === 'number' ? ` · ~${fmtViews(e.views)} views` : ''}] ${e.scenario} · aircraft:${e.aircraft}${e.pickedAircraft ? ` (${e.pickedAircraft})` : ''} · crowd:${e.crowd} · env:${e.env}${e.camera && e.camera !== 'auto' ? ` · cam:${e.camera}` : ''}${region && region !== 'any' ? ` · region:${region}` : ''}${e.boost ? ' · reach-boost' : ''}${e.remixOf ? ' · remix-of-winner' : ''}${e.hook ? ' · hook' : ''}${e.multiShot ? ' · multi-shot' : ''}${e.punchyOpen ? ' · punchy-open' : ''}${e.nudge && e.nudge.trim() ? ` · user direction:"${e.nudge.trim().slice(0, 80)}"` : ''}`
     const detail = `   flags: ${flags} · comment: ${comment}`
     const prompt = winner ? `\n   prompt: ${e.text.replace(/\s+/g, ' ').slice(0, 600)}` : ''
     return `${head}\n${detail}${prompt}`
@@ -261,7 +271,7 @@ export function buildLearnMessage(playbook: string, entry: Entry, budget: number
   const comment = entry.comment && entry.comment.trim() ? `"${entry.comment.trim()}"` : 'none'
   return [
     `CURRENT PLAYBOOK:\n${playbook && playbook.trim() ? playbook.trim() : '(empty — start a new one)'}`,
-    `NEW RESULT:\n- Reach: ${reachLabel}\n- Scenario: ${entry.scenario}\n- Aircraft pick: ${entry.aircraft}${entry.pickedAircraft ? ` (${entry.pickedAircraft})` : ''}${(entry.region === 'tier1' || (!entry.region && entry.tier1Only)) ? ' (Tier-1 countries restriction was ON — the airline choice was constrained)' : entry.region === 'europe' ? ' (Europe-only restriction was ON — the airline choice was constrained)' : ''}\n- Crowd: ${entry.crowd}\n- Environment: ${entry.env}\n- Camera: ${entry.camera || 'auto'}\n- Hook mode: ${entry.hook ? 'yes' : 'no'}\n- Multi-shot: ${entry.multiShot ? 'yes' : 'no'}\n- Punchy open: ${entry.punchyOpen ? 'yes' : 'no'}${entry.remixOf ? '\n- Remixed from a previous Good/Viral winner (deliberately reused its winning ingredients)' : ''}${entry.nudge && entry.nudge.trim() ? `\n- User's one-off direction for this clip (overrode the levers): "${entry.nudge.trim()}"` : ''}\n- Illusion-break flags: ${flags}\n- Creator comment: ${comment}`,
+    `NEW RESULT:\n- Reach: ${reachLabel}\n- Scenario: ${entry.scenario}\n- Aircraft pick: ${entry.aircraft}${entry.pickedAircraft ? ` (${entry.pickedAircraft})` : ''}${(entry.region === 'tier1' || (!entry.region && entry.tier1Only)) ? ' (Tier-1 countries restriction was ON — the airline choice was constrained)' : entry.region === 'europe' ? ' (Europe-only restriction was ON — the airline choice was constrained)' : ''}\n- Crowd: ${entry.crowd}\n- Environment: ${entry.env}\n- Camera: ${entry.camera || 'auto'}\n- Hook mode: ${entry.hook ? 'yes' : 'no'}\n- Multi-shot: ${entry.multiShot ? 'yes' : 'no'}\n- Punchy open: ${entry.punchyOpen ? 'yes' : 'no'}${entry.boost ? '\n- Reach Boost: ON (ceiling-attempt biases from the performance analysis were applied)' : ''}${typeof entry.views === 'number' ? `\n- Approximate all-time views: ${fmtViews(entry.views)}` : ''}${entry.remixOf ? '\n- Remixed from a previous Good/Viral winner (deliberately reused its winning ingredients)' : ''}${entry.nudge && entry.nudge.trim() ? `\n- User's one-off direction for this clip (overrode the levers): "${entry.nudge.trim()}"` : ''}\n- Illusion-break flags: ${flags}\n- Creator comment: ${comment}`,
     `The exact prompt that produced it:\n${entry.text}`,
     `Diagnose the REAL reason from the comment and flags, attach the lesson to that root cause as a transferable craft rule, and do NOT blame the environment / scenario / aircraft unless the evidence points there. If there is no comment and no flag, do not invent a cause. Rewrite the whole playbook now. Markdown only, under ${budget} characters.`,
   ].join('\n\n')

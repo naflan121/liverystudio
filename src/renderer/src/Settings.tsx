@@ -86,6 +86,7 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
   const winRates = useMemo(() => {
     const scored = history.filter((h) => h.status === 'scored' && h.reach)
     const dims: { title: string; key: (h: Entry) => string }[] = [
+      { title: 'Reach Boost — A/B (report biases)', key: (h) => (h.boost ? 'boost ON' : 'boost off') },
       { title: 'Scenario', key: (h) => h.scenario },
       { title: 'Aircraft mode', key: (h) => h.aircraft },
       { title: 'Crowd', key: (h) => h.crowd },

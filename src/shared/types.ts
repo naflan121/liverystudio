@@ -38,6 +38,10 @@ export interface Entry {
   caption?: string
   /** id of the Good/Viral entry this one was remixed from — evidence for the learner. */
   remixOf?: number
+  /** Reach Boost was ON for this generation (ceiling-attempt biases from the performance report). A/B-tracked. */
+  boost?: boolean
+  /** Approximate all-time view count entered at scoring time (optional) — hard data for future analysis. */
+  views?: number
   /** Whether the trends digest was injected for this generation. */
   useTrends?: boolean
   /** The user's one-off direction for this prompt — key evidence for the learner (overrides the levers). */
@@ -76,6 +80,8 @@ export interface GenerateRequest {
   remixText?: string
   /** Ask for N distinct prompts in ONE CLI call (candidate mode). 1 or absent = normal single prompt. */
   candidates?: number
+  /** Opt-in Reach Boost: bias open choices toward the performance report's highest-ceiling patterns. Fully discardable — off means byte-identical behavior to before. */
+  boost?: boolean
   /** Opt-in: feed recent Good/Viral environments for this scenario so the engine varies the setting. */
   varyCoverage: boolean
   /** Opt-in: inject the current trends digest so the engine can ride what's hot. */

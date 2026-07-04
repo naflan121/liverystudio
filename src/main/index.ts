@@ -134,6 +134,7 @@ function registerIpc(): void {
       req.resolved.label,
       req.aircraft, `crowd:${req.crowd}`, `env:${req.env}`,
       req.camera && req.camera !== 'auto' ? `cam:${req.camera}` : null,
+      req.boost ? 'REACH BOOST' : null,
       req.hook ? 'hook' : null, req.multiShot ? 'multi-shot' : null,
       `explore:${req.explore}`,
     ].filter(Boolean).join(' · ')

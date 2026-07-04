@@ -66,6 +66,16 @@ playbook) and one hard lever: **Operator region** (`REGION` in domain.ts) —
 `tier1` restricts the operator to US/Canada/UK/Australia/NZ (`TIER1_COUNTRIES`
 in prompts.ts), `europe` to European carriers (`EUROPE_EXAMPLES`).
 
+### Reach Boost (this branch — experimental, discardable)
+The `reach-boost` branch adds an opt-in **Reach Boost** toggle driven by
+`docs/rc_performance_analysis.md`: when `req.boost` is on, `buildUserMessage`
+appends one ceiling-attempt bias block (tarmac, widebody, centerline/rotation
+composition). Off = byte-identical to `main`. Entries record `boost` (and an
+optional `views` count captured at scoring) so Settings' win-rate card A/Bs
+boost-on vs boost-off. Two report-driven scenarios were added: `centerline`
+and `distant_reveal` (the latter triggers the SYSTEM "reveal exception" that
+legitimately hides scale cues). If the A/B disappoints, discard this branch.
+
 ## Adding a new lever (the common task)
 
 A lever flows through four files — keep them in sync:

@@ -44,6 +44,24 @@ export function clampPlaybook(text: string, max: number): string {
   return kept.join('\n').trim()
 }
 
+/** Parse a human view count like "1.2m", "300k", "12,400" into a number; undefined if blank/unparseable. */
+export function parseViews(s: string): number | undefined {
+  const t = (s || '').trim().toLowerCase().replace(/,/g, '')
+  if (!t) return undefined
+  const m = t.match(/^(\d+(?:\.\d+)?)\s*([km])?$/)
+  if (!m) return undefined
+  const n = parseFloat(m[1])
+  if (!isFinite(n)) return undefined
+  return Math.round(n * (m[2] === 'm' ? 1e6 : m[2] === 'k' ? 1e3 : 1))
+}
+
+/** Compact view-count display: 1234567 → "1.2M", 300000 → "300K". */
+export function fmtViews(n: number): string {
+  if (n >= 1e6) return `${+(n / 1e6).toFixed(1)}M`
+  if (n >= 1e3) return `${+(n / 1e3).toFixed(1)}K`
+  return String(n)
+}
+
 export function snippet(text: string): string {
   const i = text.indexOf('Visual:')
   const s = (i > -1 ? text.slice(i + 7) : text).trim()
