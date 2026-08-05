@@ -14,6 +14,10 @@ export interface Scenario {
   label: string
   group: string
   brief: string
+  /** Random-pick weight (default 1). Scenarios with proven virality carry >1 so "Random" leans toward the formats most likely to break out. */
+  weight?: number
+  /** Per-scenario character budget for the generated prompt. Overrides config.charLimit — some formats (e.g. ramp_glide) need a longer, geometry-matched Negative list than 1500 chars allows. */
+  charBudget?: number
 }
 
 export interface Entry {

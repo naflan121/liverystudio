@@ -158,14 +158,19 @@ function registerIpc(): void {
       }
     }
 
+    // Some scenarios (e.g. ramp_glide) carry their own, larger character budget
+    // because their geometry-matched Negative list cannot fit the default limit.
+    const charLimit = req.resolved.charBudget || cfg.charLimit
+    const rewriteTarget = req.resolved.charBudget || cfg.targetMax
+
     let text = await callClaude(buildUserMessage(req, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends), { ...base, system: SYSTEM, label: 'prompt' })
-    if (text.length > cfg.charLimit) {
-      emitLog('warn', `Over limit (${text.length} > ${cfg.charLimit}) — asking for a tighter rewrite`)
+    if (text.length > charLimit) {
+      emitLog('warn', `Over limit (${text.length} > ${charLimit}) — asking for a tighter rewrite`)
       text = await callClaude(
-        `This prompt is ${text.length} characters, over the ${cfg.charLimit} limit. Rewrite under ${cfg.targetMax}, keeping all three sections and every required Negative term. Output only the prompt:\n\n${text}`,
+        `This prompt is ${text.length} characters, over the ${charLimit} limit. Rewrite under ${rewriteTarget}, keeping all three sections and every required Negative term. Output only the prompt:\n\n${text}`,
         { ...base, system: SYSTEM, label: 'rewrite' },
       )
-      if (text.length > cfg.charLimit) emitLog('warn', `Still over the limit after the rewrite (${text.length} chars) — trim by hand or regenerate.`)
+      if (text.length > charLimit) emitLog('warn', `Still over the limit after the rewrite (${text.length} chars) — trim by hand or regenerate.`)
     }
 
     let title = ''
@@ -199,9 +204,10 @@ function registerIpc(): void {
     const avoidEnvs = req.varyCoverage && req.env === 'auto' ? recentEnvs(history, req.resolved.id) : []
     const trends = req.useTrends ? getTrends().text : ''
     const raw = await callClaude(buildUserMessage({ ...req, candidates: n }, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends), { ...base, system: SYSTEM, label: 'candidates' })
+    const batchLimit = req.resolved.charBudget || cfg.charLimit
     const variants = parseVariants(raw).slice(0, n)
     for (const v of variants) {
-      if (v.length > cfg.charLimit) emitLog('warn', `A candidate is over the limit (${v.length} chars) — pick a different one or regenerate.`)
+      if (v.length > batchLimit) emitLog('warn', `A candidate is over the limit (${v.length} chars) — pick a different one or regenerate.`)
     }
     emitLog('ok', `${variants.length} candidate prompt(s) ready — pick one.`)
     // Titles are written only for the chosen candidate (renderer side).

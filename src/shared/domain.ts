@@ -72,6 +72,10 @@ export const SCENARIOS: Scenario[] = [
   { id: 'formation', label: 'Formation / multi-plane pass', group: 'Flight', brief: 'Two or three models in tight formation on a single pass, holding spacing, all moving the same direction.' },
   { id: 'aerobatic', label: 'Aerobatic display', group: 'Flight', brief: 'An aerobatic pass — a roll or wingover — kept within believable RC energy, with wing rock and trim wobble.' },
   { id: 'warbird', label: 'Vintage warbird display', group: 'Flight', brief: 'A vintage warbird display pass, classic livery, weathered panels, period airfield setting.' },
+  // Proven-viral format from the ramp-glide-splash concept study (v1–v4). The
+  // craft rules that make it generate cleanly (flip-proof geometry, announcer
+  // audio, extended Negative list) live in a dedicated block in prompts.ts.
+  { id: 'ramp_glide', label: 'Ramp glide & splash (lakeside festival)', group: 'Water', weight: 3, charBudget: 3800, brief: 'The viral "ramp glide & splash" format: vertical drone footage, one single continuous unbroken take at natural real-time speed, at a bright lakeside summer festival — a tall wooden launch tower rising from the shore of a calm green lake, a curved plywood ramp at its top, colorful abstract banners with no readable text draped down its side, dense crowds behind barriers on the grassy bank, white and yellow event tents. The aircraft is a lightweight two-meter foam-and-plastic RC scale model, engines silent and unpowered, its physical scale constant for the entire clip, perched on the ramp lip with crew hands steadying its wingtips. The hands shove it off and it settles into a long, impossibly steady dead-stick glide a few meters above the water — wings level, tiny wobbles, sinking imperceptibly, never climbing, never turning — until in the final seconds its belly kisses the lake and ploughs a huge white spray plume, skiing in a widening V-shaped wake before slowing and settling afloat as the clip ends.' },
   { id: 'water_takeoff', label: 'Water takeoff (seaplane)', group: 'Water', brief: 'A floatplane water takeoff: taxi cutting a V-wake, spray off the hull, lift-off with droplets trailing the floats.' },
   { id: 'water_landing', label: 'Water landing (seaplane)', group: 'Water', brief: 'A floatplane water landing: shallow approach, floats contacting with weight, fan of spray, planing taxi.' },
   { id: 'belly_landing', label: 'Gear-up belly landing (incident)', group: 'Incident', brief: 'A gear-up belly landing: low approach, fuselage skidding with a scrape and dust, emergency crews near.' },
@@ -79,6 +83,19 @@ export const SCENARIOS: Scenario[] = [
   { id: 'boneyard', label: 'Boneyard dismantling timelapse', group: 'Ground', brief: 'A documentary boneyard part-out timelapse of a parked airframe. No flight, but every scale, anti-AI, audio, and Negative rule still applies; the illusion is a tiny model reading as a real scrapped airliner.' },
   { id: 'assembly', label: 'Scale model assembly POV', group: 'Ground', brief: 'A first-person workshop build / factory-style assembly timelapse. No flight maneuvers — focus on hands, parts, and scale realism.' },
 ]
+
+/** Weighted random scenario pick for the "Random" option. Scenarios carry an
+ *  optional `weight` (default 1); formats with proven virality get a higher
+ *  weight so random generation spends more shots on the likeliest breakouts. */
+export function pickRandomScenario(): Scenario {
+  const pool = SCENARIOS.filter((s) => s.id !== 'random')
+  let r = Math.random() * pool.reduce((sum, s) => sum + (s.weight ?? 1), 0)
+  for (const s of pool) {
+    r -= s.weight ?? 1
+    if (r < 0) return s
+  }
+  return pool[pool.length - 1]
+}
 
 export function groupScenarios(): [string, Scenario[]][] {
   const order = ['', 'Flight', 'Water', 'Incident', 'Ground']

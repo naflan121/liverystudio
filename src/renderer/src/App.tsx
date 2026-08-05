@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   INK, PAPER, LINE, MUTE, ACCENT, GOOD, BAD, VIRAL, WAIT, SCREEN, SCREEN_TX, lbl, sel, ghostBtn, primaryBtn, card,
 } from './ui'
-import { REACH, ILLUSION_TAGS, AIRCRAFT, CAMERA, CROWD, ENV, REGION, SCENARIOS, groupScenarios } from '@shared/domain'
+import { REACH, ILLUSION_TAGS, AIRCRAFT, CAMERA, CROWD, ENV, REGION, SCENARIOS, groupScenarios, pickRandomScenario } from '@shared/domain'
 import { snippet, toFilename, splitSections, parseViews } from '@shared/util'
 import type { AppConfig, Entry, ReachId, LogLine, LogLevel, Scenario } from '@shared/types'
 import { Settings } from './Settings'
@@ -206,7 +206,9 @@ export function App() {
     return {
       id: Date.now(), text: res.text, title: res.title, filename: res.filename,
       scenario: resolved.label, scenarioId: resolved.id, aircraft, pickedAircraft: '', pickedEnv: '', crowd, env, camera, hook, multiShot, punchyOpen,
-      tier1Only: region === 'tier1', region, useTrends, nudge: nudge.trim(), boost,
+      // ramp_glide skips the boost block (its biases fight the locked scene), so
+      // record the EFFECTIVE boost — keeps the A/B win-rate data unpolluted.
+      tier1Only: region === 'tier1', region, useTrends, nudge: nudge.trim(), boost: boost && resolved.id !== 'ramp_glide',
       status: 'queued', postedAt: null, reach: null, tags: [], comment: '', ts: new Date().toISOString(),
       ...extra,
     }
@@ -223,8 +225,8 @@ export function App() {
   async function generate() {
     if (loading) return
     resetScoringDraft()
-    const pool = SCENARIOS.filter((s) => s.id !== 'random')
-    const resolved = scenario === 'random' ? pool[Math.floor(Math.random() * pool.length)] : SCENARIOS.find((s) => s.id === scenario)!
+    // Weighted pick: proven-viral scenarios (weight > 1) come up more often.
+    const resolved = scenario === 'random' ? pickRandomScenario() : SCENARIOS.find((s) => s.id === scenario)!
     const req = buildReq(resolved)
     try {
       if (candidateMode) {
@@ -247,8 +249,7 @@ export function App() {
   async function remixWinner(source: Entry) {
     if (loading) return
     resetScoringDraft()
-    const pool = SCENARIOS.filter((s) => s.id !== 'random')
-    const resolved = SCENARIOS.find((s) => s.id === source.scenarioId) || pool[Math.floor(Math.random() * pool.length)]
+    const resolved = SCENARIOS.find((s) => s.id === source.scenarioId) || pickRandomScenario()
     try {
       const res = await window.api.generate({ ...buildReq(resolved), remixText: source.text })
       const entry = buildEntry(resolved, res, { remixOf: source.id })

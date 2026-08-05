@@ -76,6 +76,24 @@ boost-on vs boost-off. Two report-driven scenarios were added: `centerline`
 and `distant_reveal` (the latter triggers the SYSTEM "reveal exception" that
 legitimately hides scale cues). If the A/B disappoints, discard this branch.
 
+### Ramp Glide & Splash (branch `ramp-glide` — experimental, discardable)
+Adds the proven-viral `ramp_glide` scenario, distilled from the concept study in
+`G:\My Drive\Sholacase\Video Generation\Scale model\New viral concepts\`
+(`ramp-glide-splash-v3.md` / `-v4.md`): lakeside-festival ramp launch → long
+dead-stick glide → belly splash, filmed by drone. Its craft block in
+`prompts.ts` encodes the study's core finding — chase-from-behind framing is
+un-generatable and causes a 180° flip at touchdown, so the prompt must commit
+to ONE flip-proof geometry (head-on default, side-profile alternate) with
+geometry-matched Negatives. New `Scenario` fields: `weight` (weighted Random
+pick — ramp_glide is 3; helper `pickRandomScenario()` in domain.ts) and
+`charBudget` (per-scenario lift of the 1500-char limit — ramp_glide is 3800,
+enforced in `main/index.ts`). The scenario locks scene/camera/env/crowd
+(`sceneLocked` in `buildUserMessage`), skips the Reach Boost block (entries
+record the *effective* boost so the A/B stays clean), and tells the model to
+invent a fresh short announcer line each run — optionally playing on the chosen
+airline/aircraft. SYSTEM gained unpowered/dead-stick exceptions (no motor
+audio; crew hands replace the FPV-pilot scale cue).
+
 ## Adding a new lever (the common task)
 
 A lever flows through four files — keep them in sync:

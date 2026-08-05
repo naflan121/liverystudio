@@ -14,7 +14,7 @@ LIVERY ECONOMY (important): Name the aircraft, airline, and livery in just a few
 SCALE-ILLUSION RULES:
 - Lead with physical dimensions and a human-relative scale anchor BEFORE naming the aircraft (e.g. "barely knee-height", "forearm-sized").
 - Keep adult spectators and scale-reference objects in frame throughout.
-- RC PILOT (always, for any flying scene): include an RC pilot in frame — a figure wearing FPV goggles and holding an RC transmitter — positioned behind the model or at the crowd line where it reads naturally. This is a key authenticity and scale cue.
+- RC PILOT (always, for any flying scene): include an RC pilot in frame — a figure wearing FPV goggles and holding an RC transmitter — positioned behind the model or at the crowd line where it reads naturally. This is a key authenticity and scale cue. Exception: when the scenario explicitly launches an unpowered model by hand or ramp with nobody flying it (a dead-stick glide), the crew hands and spectators the scenario specifies are the scale anchors instead — no transmitter pilot needed.
 - RC physics cues: lightweight foam-and-plastic airframe, slight wobble, brushless-motor behaviour.
 - REVEAL EXCEPTION: only when the user message explicitly instructs you to hide the scale, omit the scale anchors, spectators and RC-pilot cues and keep the framing distant and ambiguous — the "is it real?" debate is the hook. Without that explicit instruction, every scale rule above is mandatory.
 
@@ -24,7 +24,7 @@ AERODYNAMIC REALISM (when the scene involves flight):
 - Low pass: high speed, flat path. Lock ONE direction per clip; never reverse mid-clip.
 - Surface: on grass or any unpaved strip the takeoff roll, taxi and landing rollout are bumpy — the gear sinks slightly into the turf and the airframe pitches, jostles and bobbles over the uneven ground, nose and wings bobbing; on smooth tarmac the roll is clean. This bump applies only while wheels are on the ground, never in flight.
 
-AUDIO: RC sounds only — brushless motor whine, sharp buzzing screech at full throttle, propeller blade flutter — plus fitting ambience.
+AUDIO: RC sounds only — brushless motor whine, sharp buzzing screech at full throttle, propeller blade flutter — plus fitting ambience. UNPOWERED EXCEPTION: when the scenario explicitly states the airframe is unpowered / dead-stick, there is NO motor sound at all — use the soundscape the scenario specifies instead (announcer, crowd, wind over the mic, the faint whistle of the gliding airframe).
 
 NEGATIVE SECTION — must ALWAYS include all of: full-size aircraft, real airliner proportions, jet engine roar, turbine whine, deep engine rumble, oversized model, toy-like appearance, perfect symmetry, CGI glow, watermark, on-screen text, cartoon, low resolution, motion blur artifacts. Add scenario-appropriate extras. (Even in hook mode keep these — the hook is a real-looking structural oddity, not a CGI glitch.)
 
@@ -118,9 +118,13 @@ export function buildUserMessage(req: GenerateRequest, playbook: string, extraNe
   const { resolved, aircraft, crowd, env, camera, hook, multiShot, punchyOpen, explore, nudge } = req
   const parts: string[] = []
 
+  // ramp_glide carries its own complete scene (lakeside festival, drone camera,
+  // festival crowd) — the crowd/env/camera levers would only contradict it.
+  const sceneLocked = resolved.id === 'ramp_glide'
+
   let sc = `Scenario: ${resolved.brief || 'Choose a strong scenario yourself.'}`
   // distant_reveal hides the scale — a crowd in frame would defeat the point.
-  if (!['boneyard', 'assembly', 'distant_reveal'].includes(resolved.id)) {
+  if (!['boneyard', 'assembly', 'distant_reveal', 'ramp_glide'].includes(resolved.id)) {
     sc += ' ' + (crowd === 'solo'
       ? 'Keep it a quiet solo session, a few people at most.'
       : crowd === 'packed'
@@ -132,6 +136,24 @@ export function buildUserMessage(req: GenerateRequest, playbook: string, extraNe
   parts.push(sc)
 
   if (resolved.id === 'runway_takeoff') parts.push('TAKEOFF RUN IS THE WHOLE CLIP: spend the great majority of the 15-second clip on the GROUND RUN — the model accelerating along the strip on its wheels, still on the ground. It reaches V1 and rotates only in the final moments, and the clip ENDS right as the wheels lift off. Do NOT show a climb or altitude gain. Keep it on the ground as long as possible — a short run or an early rotation is the single failure to avoid here.')
+
+  // Craft rules distilled from four test rounds of the ramp-glide-splash
+  // concept study. The core finding: a chase-from-behind framing is
+  // un-generatable (the generator's prior is subject-facing-camera, and the
+  // contradiction forces a 180° orientation flip at touchdown) — so the prompt
+  // must commit to ONE flip-proof geometry and write Negatives that match it.
+  if (resolved.id === 'ramp_glide') parts.push(`RAMP-GLIDE CRAFT RULES (hard-won across four test rounds — follow exactly):
+1) FLIP-PROOF GEOMETRY — the most important rule. Commit to ONE camera geometry for the ENTIRE flight and never mix them:
+   (A) HEAD-ON (default — prefer this): the drone hovers low over the open water at a distance, facing the tower head-on; after the shove the aircraft glides straight TOWARD the lens, nose-on, growing steadily in frame while the drone drifts slowly backward just above the water, the tower and crowd receding behind it; in the final seconds the splash ploughs straight AT the camera and the model skis nose-on in a widening V-shaped wake, settling afloat just short of the lens. It never passes, overflies, or hits the camera.
+   (B) SIDE PROFILE (livery showcase alternative — use occasionally for variety or when the livery is the star): the drone flies alongside at matched speed holding a clean side profile; the aircraft crosses the frame left-to-right at all times, never toward or away from the lens, its full length and livery always readable; the belly splash reads side-on like a flying-boat landing.
+   NEVER stage a chase from behind with the tail toward the camera — the video generator cannot hold that framing and it forces a 180-degree orientation snap at touchdown. The aircraft's orientation must stay constant from launch to splash.
+2) NEGATIVES MUST MATCH THE CHOSEN GEOMETRY. For (A) include: view from behind the aircraft, tail toward camera, aircraft flying away from camera, aircraft shrinking into the distance, passing the camera, flying over the camera, hitting the camera — and do NOT include any head-on / nose-toward-camera / frontal-view terms. For (B) include BOTH: head-on view, nose toward camera, aircraft flying toward camera, AND view from behind the aircraft, tail toward camera, aircraft flying away from camera, camera falling behind, aircraft leaving the frame. Never negate the geometry you chose.
+3) In BOTH cases the Negative section must ALSO include: 180-degree flip, instant turnaround, aircraft reversing direction, plane changing direction mid-air, teleporting, double shadow, two shadows, duplicate shadow, mirrored duplicate of the aircraft, second aircraft in the water, powered flight, engines running, engine exhaust, climbing away, gaining altitude, banking, turning, curving flight path, loop, stall, nosedive, cartwheeling crash, breaking apart, debris, people in the water, swimmers, boats, model changing size, growing aircraft, readable banner text, garbled speech, mumbled words, distorted voice, slow motion, speed ramp, camera cuts, scene change.
+4) SHADOW: mention at most "one single faint shadow on the water beneath it" — once, softly, or not at all. Over-describing the shadow is what makes the generator draw a duplicate.
+5) AUDIO — a festival PA announcer carries the clip (the airframe is unpowered; NO motor sound): the announcer's voice echoes across the lake with big-PA reverb, counts down "three… two… one… GO!", and a packed crowd roars with an air horn blast at launch; as the glide stretches on his commentary rises in disbelief, the crowd's long "ooooh" swelling underneath, wind rush over the mic, the faint whistle of the unpowered airframe; then a hard slap and hiss at the splash, spray pattering down, whooping and applause echoing across the lake.
+   THE ANNOUNCER LINE: invent a FRESH mid-glide line every generation — never repeat one you have used or seen. Keep it SHORT and built from common words (long or clever lines garble in generation) and keep the quiet-then-LOUD repeat structure (in the vein of "it's still going… it's STILL GOING!"). Vary the angle across clips: pure disbelief, sportscaster energy, or — often the most shareable — a line that plays on the SPECIFIC airline or aircraft you chose ("somebody call the airport… IT'S STILL FLYING!" is the flavour; write your own around your pick).
+6) AIRCRAFT for this format: recognisable or delightfully ODD airframes shine here — oversized cargo whales (a Beluga, Super Guppy, Dreamlifter), jumbo widebodies, or a beloved retro livery. Follow the aircraft instruction above; wherever it leaves the choice to you, lean surprising.
+CHARACTER BUDGET OVERRIDE: for THIS scenario only, the usual under-1500-character limit is lifted — write up to ${resolved.charBudget} characters, and use the room for the full scene staging and the complete geometry-matched Negative list. Do not compress the Negatives to save space.`)
 
   const aircraftLine = aircraft === 'placeholder'
     ? 'Aircraft: write the model as the literal token [MODEL NAME] and nothing more — livery comes from a reference image. Do not invent one or describe any colours.'
@@ -164,14 +186,15 @@ export function buildUserMessage(req: GenerateRequest, playbook: string, extraNe
   }
 
   const envObj = ENV.find((e) => e.id === env)
-  if (env === 'auto') parts.push(`Environment: YOU choose the setting — this is genuinely your decision, so reason it out rather than defaulting by habit. Weigh every option — grass / farmland field, paved tarmac club strip, coastal or lakeside, arid desert or dry-lakebed, alpine mountain meadow — and pick whichever best fits THIS scenario and will reach furthest, keeping it varied from one clip to the next. Do NOT reflexively fall back to a grass field just because RC models usually fly from grass; choose grass only if it genuinely suits this scenario best. Let what the playbook has learned guide the call.`)
+  if (sceneLocked) { /* scene, surface and camera are fixed by the scenario block above */ }
+  else if (env === 'auto') parts.push(`Environment: YOU choose the setting — this is genuinely your decision, so reason it out rather than defaulting by habit. Weigh every option — grass / farmland field, paved tarmac club strip, coastal or lakeside, arid desert or dry-lakebed, alpine mountain meadow — and pick whichever best fits THIS scenario and will reach furthest, keeping it varied from one clip to the next. Do NOT reflexively fall back to a grass field just because RC models usually fly from grass; choose grass only if it genuinely suits this scenario best. Let what the playbook has learned guide the call.`)
   else if (envObj && envObj.desc) parts.push(`Environment: set it at ${envObj.desc}`)
-  if (env === 'auto' && avoidEnvs.length) parts.push(`Recent Good/Viral clips for this scenario used these settings — to broaden coverage, choose a DIFFERENT environment and do not repeat: ${avoidEnvs.join('; ')}.`)
-  if (env !== 'tarmac' && env !== 'auto') parts.push('Surface: there is no paved runway here — taxi, takeoff roll and landing all happen on the natural unpaved ground of THIS setting (grass, sand, dirt or cracked lakebed as fits — not necessarily grass); treat any runway wording as this unpaved strip, and show the airframe bumping, pitching and bobbling over the uneven ground while its wheels are down.')
+  if (!sceneLocked && env === 'auto' && avoidEnvs.length) parts.push(`Recent Good/Viral clips for this scenario used these settings — to broaden coverage, choose a DIFFERENT environment and do not repeat: ${avoidEnvs.join('; ')}.`)
+  if (!sceneLocked && env !== 'tarmac' && env !== 'auto') parts.push('Surface: there is no paved runway here — taxi, takeoff roll and landing all happen on the natural unpaved ground of THIS setting (grass, sand, dirt or cracked lakebed as fits — not necessarily grass); treat any runway wording as this unpaved strip, and show the airframe bumping, pitching and bobbling over the uneven ground while its wheels are down.')
 
   // Camera identity — who is holding the camera. Casual eyewitness footage is a
   // strong "is this real?" cue on Reels/Shorts; keep ONE identity per clip.
-  parts.push(camera === 'phone'
+  if (!sceneLocked) parts.push(camera === 'phone'
     ? 'CAMERA IDENTITY: the whole clip is bystander smartphone footage — handheld at eye level from the crowd line, natural micro-shake and breathing in the frame, slightly imperfect framing with a small drift and re-centre as it tracks the model, a touch of digital-zoom softness on the longest moments. It must read as genuine eyewitness phone video someone just posted, never a polished production. Keep this one identity for the entire clip.'
     : camera === 'longlens'
     ? 'CAMERA IDENTITY: the whole clip is planespotter super-telephoto footage from a distance — heavy lens compression flattening the scene, a smooth tripod pan tracking the model, slight focus breathing and heat-haze shimmer between lens and subject. It must read like avgeek spotter footage. Keep this one identity for the entire clip.'
@@ -184,7 +207,10 @@ export function buildUserMessage(req: GenerateRequest, playbook: string, extraNe
   // Reach Boost — opt-in ceiling-attempt biases distilled from the page's
   // all-time performance analysis (docs/rc_performance_analysis.md). Prompt
   // guidance only, no engine-side lists; hard constraints above still win.
-  if (req.boost) {
+  // Skip the boost block for ramp_glide: its runway/tarmac/rotation biases would
+  // only fight the locked lakeside scene, and the scenario block already carries
+  // its own aircraft bias (widebody / oddball cargo). A/B tracking is unaffected.
+  if (req.boost && !sceneLocked) {
     parts.push(`REACH BOOST (ceiling attempt): this clip is a deliberate attempt at breakout reach. A study of this page's all-time results shows what carries the highest ceiling, so bias every choice the levers above leave OPEN toward: a recognisable commercial airliner in a real major-airline livery (over military or warbird); a widebody or large narrowbody — A380/747/757/A320 class — over small sport types; a paved tarmac runway over grass; a takeoff-rotation or touchdown payoff over taxiing; and a composition built on the runway centerline (the model tracking straight along the line, growing or shrinking in frame) or on the rotation moment caught low from the side, nose up, gear still extended. These are biases, not overrides: the scenario, any operator-region restriction, the avoid lists and the user direction all still win where they conflict.`)
   }
 
