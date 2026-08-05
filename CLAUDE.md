@@ -81,10 +81,18 @@ Adds the proven-viral `ramp_glide` scenario, distilled from the concept study in
 `G:\My Drive\Sholacase\Video Generation\Scale model\New viral concepts\`
 (`ramp-glide-splash-v3.md` / `-v4.md`): lakeside-festival ramp launch → long
 dead-stick glide → belly splash, filmed by drone. Its craft block in
-`prompts.ts` encodes the study's core finding — chase-from-behind framing is
-un-generatable and causes a 180° flip at touchdown, so the prompt must commit
-to ONE flip-proof geometry (head-on default, side-profile alternate) with
-geometry-matched Negatives. New `Scenario` fields: `weight` (weighted Random
+`prompts.ts` encodes the study's core finding — a LOW chase-from-behind framing
+is un-generatable and causes a 180° flip at touchdown, so the prompt must
+commit to ONE flip-proof geometry with geometry-matched Negatives. The default
+geometry is the HIGH AERIAL FOLLOW (drone above the glide looking down, lake
+filling the frame, shoreline crowd pinned at top) — the exact angle of the
+first posted clip, which pulled ~1.5M FB views; head-on and side-profile are
+the variety alternates. Announcer commentary is mandatory (AI invents a fresh
+short quiet-then-LOUD line each run, ideally riffing on the chosen
+aircraft/airline) and slow motion is hard-banned (festival energy). There is
+also a general **Long prompt** lever (`req.longPrompt`, `LONG_PROMPT_CHARS` =
+4800) for platforms that accept long prompts — works on every scenario,
+tracked on entries for the learner. New `Scenario` fields: `weight` (weighted Random
 pick — ramp_glide is 3; helper `pickRandomScenario()` in domain.ts) and
 `charBudget` (per-scenario lift of the 1500-char limit — ramp_glide is 3800,
 enforced in `main/index.ts`). The scenario locks scene/camera/env/crowd

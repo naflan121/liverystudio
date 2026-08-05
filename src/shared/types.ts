@@ -44,6 +44,8 @@ export interface Entry {
   remixOf?: number
   /** Reach Boost was ON for this generation (ceiling-attempt biases from the performance report). A/B-tracked. */
   boost?: boolean
+  /** Long-prompt mode was ON (4800-char budget) — evidence for the learner on whether longer prompts score better. */
+  longPrompt?: boolean
   /** Approximate all-time view count entered at scoring time (optional) — hard data for future analysis. */
   views?: number
   /** Whether the trends digest was injected for this generation. */
@@ -86,6 +88,8 @@ export interface GenerateRequest {
   candidates?: number
   /** Opt-in Reach Boost: bias open choices toward the performance report's highest-ceiling patterns. Fully discardable — off means byte-identical behavior to before. */
   boost?: boolean
+  /** Opt-in long-prompt mode: lift the char limit to LONG_PROMPT_CHARS (4800) for platforms that accept long prompts — extra room for physics, scale cues and negatives. */
+  longPrompt?: boolean
   /** Opt-in: feed recent Good/Viral environments for this scenario so the engine varies the setting. */
   varyCoverage: boolean
   /** Opt-in: inject the current trends digest so the engine can ride what's hot. */

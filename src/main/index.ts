@@ -6,7 +6,7 @@ import {
   getPlaybookVersions, appendLearningLog, getLearningLog, resetMemory, dataDir, setDataDir,
   getTrends, setTrends,
 } from './store'
-import { SYSTEM, TITLE_SYSTEM, LEARN_SYSTEM, EXTRACT_SYSTEM, TREND_SYSTEM, CAPTION_SYSTEM, buildUserMessage, titleMsg, captionMsg, buildLearnMessage, buildRedistillMessage, extractMsg, parseScene, trendsMsg, parseVariants } from '../shared/prompts'
+import { SYSTEM, TITLE_SYSTEM, LEARN_SYSTEM, EXTRACT_SYSTEM, TREND_SYSTEM, CAPTION_SYSTEM, LONG_PROMPT_CHARS, buildUserMessage, titleMsg, captionMsg, buildLearnMessage, buildRedistillMessage, extractMsg, parseScene, trendsMsg, parseVariants } from '../shared/prompts'
 import { cleanTitle, toFilename, clampPlaybook } from '../shared/util'
 import type { GenerateRequest, Entry, LogLevel } from '../shared/types'
 
@@ -135,6 +135,7 @@ function registerIpc(): void {
       req.aircraft, `crowd:${req.crowd}`, `env:${req.env}`,
       req.camera && req.camera !== 'auto' ? `cam:${req.camera}` : null,
       req.boost ? 'REACH BOOST' : null,
+      req.longPrompt ? 'long-prompt' : null,
       req.hook ? 'hook' : null, req.multiShot ? 'multi-shot' : null,
       `explore:${req.explore}`,
     ].filter(Boolean).join(' · ')
@@ -159,9 +160,10 @@ function registerIpc(): void {
     }
 
     // Some scenarios (e.g. ramp_glide) carry their own, larger character budget
-    // because their geometry-matched Negative list cannot fit the default limit.
-    const charLimit = req.resolved.charBudget || cfg.charLimit
-    const rewriteTarget = req.resolved.charBudget || cfg.targetMax
+    // because their geometry-matched Negative list cannot fit the default limit;
+    // the long-prompt lever lifts it further for platforms that accept ~4800.
+    const charLimit = req.longPrompt ? LONG_PROMPT_CHARS : (req.resolved.charBudget || cfg.charLimit)
+    const rewriteTarget = req.longPrompt ? LONG_PROMPT_CHARS : (req.resolved.charBudget || cfg.targetMax)
 
     let text = await callClaude(buildUserMessage(req, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends), { ...base, system: SYSTEM, label: 'prompt' })
     if (text.length > charLimit) {
@@ -204,7 +206,7 @@ function registerIpc(): void {
     const avoidEnvs = req.varyCoverage && req.env === 'auto' ? recentEnvs(history, req.resolved.id) : []
     const trends = req.useTrends ? getTrends().text : ''
     const raw = await callClaude(buildUserMessage({ ...req, candidates: n }, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends), { ...base, system: SYSTEM, label: 'candidates' })
-    const batchLimit = req.resolved.charBudget || cfg.charLimit
+    const batchLimit = req.longPrompt ? LONG_PROMPT_CHARS : (req.resolved.charBudget || cfg.charLimit)
     const variants = parseVariants(raw).slice(0, n)
     for (const v of variants) {
       if (v.length > batchLimit) emitLog('warn', `A candidate is over the limit (${v.length} chars) — pick a different one or regenerate.`)

@@ -108,6 +108,7 @@ export function App() {
   const [varyCoverage, setVaryCoverage] = useState(false)
   const [useTrends, setUseTrends] = useState(false)
   const [boost, setBoost] = useState(false)
+  const [longPrompt, setLongPrompt] = useState(false)
   const [candidateMode, setCandidateMode] = useState(false)
   const [candidates, setCandidates] = useState<Entry[]>([])
   const [nudge, setNudge] = useState('')
@@ -208,14 +209,14 @@ export function App() {
       scenario: resolved.label, scenarioId: resolved.id, aircraft, pickedAircraft: '', pickedEnv: '', crowd, env, camera, hook, multiShot, punchyOpen,
       // ramp_glide skips the boost block (its biases fight the locked scene), so
       // record the EFFECTIVE boost — keeps the A/B win-rate data unpolluted.
-      tier1Only: region === 'tier1', region, useTrends, nudge: nudge.trim(), boost: boost && resolved.id !== 'ramp_glide',
+      tier1Only: region === 'tier1', region, useTrends, nudge: nudge.trim(), boost: boost && resolved.id !== 'ramp_glide', longPrompt,
       status: 'queued', postedAt: null, reach: null, tags: [], comment: '', ts: new Date().toISOString(),
       ...extra,
     }
   }
 
   function buildReq(resolved: Scenario) {
-    return { resolved, aircraft, crowd, env, camera, hook, multiShot, punchyOpen, tier1Only: region === 'tier1', region, varyCoverage, useTrends, explore, nudge, boost }
+    return { resolved, aircraft, crowd, env, camera, hook, multiShot, punchyOpen, tier1Only: region === 'tier1', region, varyCoverage, useTrends, explore, nudge, boost, longPrompt }
   }
 
   function resetScoringDraft() {
@@ -470,6 +471,11 @@ export function App() {
             <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13, border: `1px solid ${boost ? ACCENT : LINE}`, borderRadius: 10, padding: '9px 12px', background: boost ? '#FBEADF' : '#fff' }}>
               <input type="checkbox" checked={boost} onChange={(e) => setBoost(e.target.checked)} style={{ width: 16, height: 16, accentColor: ACCENT, flexShrink: 0 }} />
               <span><span style={{ fontWeight: 600 }}>Reach Boost 📈</span> <span style={{ color: MUTE }}>Ceiling-attempt biases from the performance report (tarmac, widebody, centerline/rotation). A/B-tracked in Settings — untick to get the exact old behavior.</span></span>
+            </label>
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13 }}>
+              <input type="checkbox" checked={longPrompt} onChange={(e) => setLongPrompt(e.target.checked)} style={{ width: 16, height: 16, accentColor: ACCENT, flexShrink: 0 }} />
+              <span><span style={{ fontWeight: 600 }}>Long prompt (4800 chars).</span> <span style={{ color: MUTE }}>For platforms that accept long prompts — more room for physics, scale cues and negatives. Tracked, so the learner can tell if it helps.</span></span>
             </label>
 
             <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13 }}>
