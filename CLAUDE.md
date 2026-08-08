@@ -81,13 +81,15 @@ Adds the proven-viral `ramp_glide` scenario, distilled from the concept study in
 `G:\My Drive\Sholacase\Video Generation\Scale model\New viral concepts\`
 (`ramp-glide-splash-v3.md` / `-v4.md`): lakeside-festival ramp launch → long
 dead-stick glide → belly splash, filmed by drone. Its craft block in
-`prompts.ts` encodes the study's core finding — a LOW chase-from-behind framing
-is un-generatable and causes a 180° flip at touchdown, so the prompt must
-commit to ONE flip-proof geometry with geometry-matched Negatives. The default
-geometry is the HIGH AERIAL FOLLOW (drone above the glide looking down, lake
-filling the frame, shoreline crowd pinned at top) — the exact angle of the
-first posted clip, which pulled ~1.5M FB views; head-on and side-profile are
-the variety alternates. Announcer commentary is mandatory (AI invents a fresh
+`prompts.ts` uses the **v3 staging as the default** — swing in behind at
+launch, chase from behind and slightly above, tail toward the lens — because
+field results (incl. a ~1.5M-view clip) beat v4's theory that the chase was
+un-generatable. v4's diagnosis survives as ARMOR: explicit orientation-lock
+wording, anti-flip Negatives, the soft single-shadow rule, and two flip-proof
+alternate geometries (head-on, side-profile) for variety. A straight-down
+overhead is a known failure of aerial framings — negatives guard against it.
+Commit to ONE geometry per clip; Negatives must match the chosen geometry
+(never negate the geometry you chose). Announcer commentary is mandatory (AI invents a fresh
 short quiet-then-LOUD line each run, ideally riffing on the chosen
 aircraft/airline) and slow motion is hard-banned (festival energy). There is
 also a general **Long prompt** lever (`req.longPrompt`, `LONG_PROMPT_CHARS` =
