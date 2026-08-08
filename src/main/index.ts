@@ -101,6 +101,27 @@ function recentEnvs(history: Entry[], scenarioId: string): string[] {
   return [...new Set(arr)].slice(0, COMBO_MEMORY)
 }
 
+// Announcer lines already generated for the ramp-glide scenario, newest first.
+// Extracted from the quoted speech in each prompt's Audio section and fed back
+// as an avoid list — without it the model drifts to the same "it's still
+// going!" call for every airline. The fixed countdown is excluded (it is meant
+// to repeat every clip).
+function recentAnnouncerLines(history: Entry[]): string[] {
+  const lines: string[] = []
+  for (const h of history) {
+    if (h.scenarioId !== 'ramp_glide') continue
+    const audio = h.text.split(/\bAudio:/i)[1]?.split(/\bNegative:/i)[0]
+    if (!audio) continue
+    for (const m of audio.matchAll(/["“”]([^"“”]{3,90})["“”]/g)) {
+      const line = m[1].trim()
+      if (/three\W+.*two\W+.*one/i.test(line)) continue
+      if (!/\s/.test(line)) continue // single-word quotes are crowd noise ("ooooh"), not commentary
+      lines.push(line)
+    }
+  }
+  return [...new Set(lines)].slice(0, COMBO_MEMORY)
+}
+
 function registerIpc(): void {
   ipcMain.handle('config:get', () => getConfig())
   ipcMain.handle('config:set', (_e, patch) => setConfig(patch))
@@ -146,10 +167,12 @@ function registerIpc(): void {
 
     const avoidCombos = req.aircraft !== 'placeholder' ? recentCombos(history, req.resolved.id) : []
     const avoidEnvs = req.varyCoverage && req.env === 'auto' ? recentEnvs(history, req.resolved.id) : []
+    const avoidLines = req.resolved.id === 'ramp_glide' ? recentAnnouncerLines(history) : []
     const trendsData = req.useTrends ? getTrends() : { text: '', updatedAt: '' }
     const trends = trendsData.text
     if (avoidCombos.length) emitLog('info', `Steering clear of ${avoidCombos.length} aircraft that already did well for ${req.resolved.label}.`)
     if (avoidEnvs.length) emitLog('info', `Varying away from ${avoidEnvs.length} recent setting(s) for ${req.resolved.label}.`)
+    if (avoidLines.length) emitLog('info', `Steering the announcer away from ${avoidLines.length} line(s) already used.`)
     if (req.useTrends) {
       if (!trends) emitLog('warn', 'Use-trends is on but no digest saved yet — refresh it in Settings.')
       else {
@@ -165,7 +188,7 @@ function registerIpc(): void {
     const charLimit = req.longPrompt ? LONG_PROMPT_CHARS : (req.resolved.charBudget || cfg.charLimit)
     const rewriteTarget = req.longPrompt ? LONG_PROMPT_CHARS : (req.resolved.charBudget || cfg.targetMax)
 
-    let text = await callClaude(buildUserMessage(req, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends), { ...base, system: SYSTEM, label: 'prompt' })
+    let text = await callClaude(buildUserMessage(req, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends, avoidLines), { ...base, system: SYSTEM, label: 'prompt' })
     if (text.length > charLimit) {
       emitLog('warn', `Over limit (${text.length} > ${charLimit}) — asking for a tighter rewrite`)
       text = await callClaude(
@@ -204,8 +227,9 @@ function registerIpc(): void {
     emitLog('step', `Generating ${n} candidates in one call — ${req.resolved.label}`)
     const avoidCombos = req.aircraft !== 'placeholder' ? recentCombos(history, req.resolved.id) : []
     const avoidEnvs = req.varyCoverage && req.env === 'auto' ? recentEnvs(history, req.resolved.id) : []
+    const avoidLines = req.resolved.id === 'ramp_glide' ? recentAnnouncerLines(history) : []
     const trends = req.useTrends ? getTrends().text : ''
-    const raw = await callClaude(buildUserMessage({ ...req, candidates: n }, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends), { ...base, system: SYSTEM, label: 'candidates' })
+    const raw = await callClaude(buildUserMessage({ ...req, candidates: n }, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends, avoidLines), { ...base, system: SYSTEM, label: 'candidates' })
     const batchLimit = req.longPrompt ? LONG_PROMPT_CHARS : (req.resolved.charBudget || cfg.charLimit)
     const variants = parseVariants(raw).slice(0, n)
     for (const v of variants) {
