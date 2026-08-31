@@ -6,6 +6,7 @@ import { REACH, ILLUSION_TAGS, AIRCRAFT, CAMERA, CROWD, ENV, REGION, SCENARIOS, 
 import { snippet, toFilename, splitSections, parseViews } from '@shared/util'
 import type { AppConfig, Entry, ReachId, LogLine, LogLevel, Scenario } from '@shared/types'
 import { Settings } from './Settings'
+import { History } from './History'
 
 const LOG_COLORS: Record<LogLevel, string> = {
   info: '#9c968a', step: '#f2a55e', ok: '#7fc59c', warn: '#e2b53c', err: '#ff8a6b',
@@ -79,7 +80,6 @@ function statusMeta(h: Entry) {
   if (h.status === 'skipped') return { label: 'Skipped', color: MUTE }
   return { label: 'Awaiting', color: WAIT }
 }
-function daysSince(h: Entry) { const base = h.postedAt || new Date(h.ts).getTime(); return Math.floor((Date.now() - base) / 86400000) }
 function ago(h: Entry, posted?: boolean) {
   const base = posted && h.postedAt ? h.postedAt : new Date(h.ts).getTime()
   const d = Math.floor((Date.now() - base) / 86400000)
@@ -92,7 +92,7 @@ function ago(h: Entry, posted?: boolean) {
 
 export function App() {
   const [config, setConfig] = useState<AppConfig | null>(null)
-  const [view, setView] = useState<'lab' | 'settings'>('lab')
+  const [view, setView] = useState<'lab' | 'settings' | 'history'>('lab')
   const [history, setHistory] = useState<Entry[]>([])
   const [playbook, setPlaybook] = useState('')
 
@@ -129,7 +129,6 @@ export function App() {
   const [toast, setToast] = useState('')
   const [captioning, setCaptioning] = useState(false)
   const [showLearn, setShowLearn] = useState(false)
-  const [filter, setFilter] = useState('toscore')
   const [logs, setLogs] = useState<LogLine[]>([])
 
   // A small, self-clearing confirmation line (quiet — no modal).
@@ -179,12 +178,7 @@ export function App() {
   const hookTries = rated.filter((h) => h.hook)
   const hookStrong = hookTries.filter((h) => h.reach === 'viral' || h.reach === 'good')
 
-  const counts: Record<string, number> = {
-    toscore: history.filter((h) => h.status === 'queued' || h.status === 'posted').length,
-    scored: history.filter((h) => h.status === 'scored').length,
-    skipped: history.filter((h) => h.status === 'skipped').length,
-    all: history.length,
-  }
+  const toscoreCount = history.filter((h) => h.status === 'queued' || h.status === 'posted').length
 
   // Runs the learn step in the background — the caller does NOT await this, so
   // the user can keep scoring, opening entries, or generating while the playbook
@@ -286,7 +280,7 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  function openEntry(h: Entry) { setCurrent(h); setPickedTags(h.tags || []); setComment(h.comment || ''); setReachDraft(h.reach || null); setExcludeCoverage(!!h.excludeCoverage); setViewsDraft(typeof h.views === 'number' ? String(h.views) : '') }
+  function openEntry(h: Entry) { setCurrent(h); setPickedTags(h.tags || []); setComment(h.comment || ''); setReachDraft(h.reach || null); setExcludeCoverage(!!h.excludeCoverage); setViewsDraft(typeof h.views === 'number' ? String(h.views) : ''); setNudge(h.nudge || '') }
 
   // Save without learning — used for posted / skipped / restore.
   function updateEntry(patch: Partial<Entry>) {
@@ -363,17 +357,16 @@ export function App() {
   const sections = current ? splitSections(current.text) : null
   const cur = current ? history.find((h) => h.id === current.id) || current : null
 
-  let listView = [...history]
-  if (filter === 'toscore') listView = listView.filter((h) => h.status === 'queued' || h.status === 'posted')
-  else if (filter === 'scored') listView = listView.filter((h) => h.status === 'scored')
-  else if (filter === 'skipped') listView = listView.filter((h) => h.status === 'skipped')
-
   if (!config) {
     return <div style={{ padding: 40, fontFamily: 'ui-sans-serif, system-ui', color: MUTE }}>Loading…</div>
   }
 
   if (view === 'settings') {
     return <Settings config={config} onSave={setConfig} onClose={() => setView('lab')} playbook={playbook} onPlaybook={setPlaybook} onResetMemory={clearAll} />
+  }
+
+  if (view === 'history') {
+    return <History entries={history} openId={cur?.id ?? null} onOpen={(h) => { openEntry(h); setView('lab') }} onClose={() => setView('lab')} />
   }
 
   const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform)
@@ -398,6 +391,7 @@ export function App() {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             {learning && <span style={{ color: ACCENT, fontSize: 12.5, fontWeight: 600 }}>teaching playbook…{learnCount > 1 ? ` (${learnCount})` : ''}</span>}
+            <button onClick={() => setView('history')} style={{ ...ghostBtn, padding: '8px 14px' }}>History</button>
             <button onClick={() => setView('settings')} style={{ ...ghostBtn, padding: '8px 14px' }}>Settings</button>
           </div>
         </div>
@@ -412,7 +406,7 @@ export function App() {
             </span>
           ))}
           {hookTries.length > 0 && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${LINE}`, borderRadius: 20, padding: '5px 12px', fontSize: 12.5, background: '#fff', color: MUTE }}>hook <strong style={{ color: INK }}>{hookStrong.length}/{hookTries.length}</strong></span>}
-          <span style={{ marginLeft: 'auto', fontSize: 12.5, color: counts.toscore > 0 ? ACCENT : MUTE, fontWeight: 600 }}>{counts.toscore} awaiting your result</span>
+          <span style={{ marginLeft: 'auto', fontSize: 12.5, color: toscoreCount > 0 ? ACCENT : MUTE, fontWeight: 600 }}>{toscoreCount} awaiting your result</span>
         </div>
 
         {/* Three columns: controls · live result · recent generations */}
@@ -552,6 +546,9 @@ export function App() {
                     <button onClick={() => setCurrent(null)} style={{ background: 'transparent', border: 'none', color: '#8d887b', fontSize: 16, cursor: 'pointer', lineHeight: 1 }} aria-label="Close">×</button>
                   </span>
                 </div>
+                {current.nudge && (
+                  <div style={{ fontSize: 12, color: '#8d887b', marginBottom: 10 }}><span style={{ color: ACCENT, fontWeight: 600 }}>Direction: </span>{current.nudge}</div>
+                )}
                 <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, monospace', fontSize: 12.5, lineHeight: 1.7, color: SCREEN_TX, whiteSpace: 'pre-wrap' }}>
                   {sections!.map((s, i) => <div key={i} style={{ marginBottom: i < sections!.length - 1 ? 12 : 0 }}><span style={{ color: ACCENT, fontWeight: 600 }}>{s.label}</span>{s.body}</div>)}
                 </div>
@@ -684,41 +681,6 @@ export function App() {
         <div style={{ marginTop: 16 }}>
           <LogPanel logs={logs} onClear={() => setLogs([])} />
         </div>
-
-        {/* History — full width */}
-        {history.length > 0 && (
-          <div style={{ border: `1px solid ${LINE}`, borderRadius: 12, padding: '14px 16px', marginTop: 16 }}>
-            <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginBottom: 12 }}>
-              {[['toscore', 'To score'], ['scored', 'Scored'], ['skipped', 'Skipped'], ['all', 'All']].map(([id, label]) => (
-                <button key={id} onClick={() => setFilter(id)} style={{ borderRadius: 20, padding: '5px 13px', fontSize: 12.5, cursor: 'pointer', fontWeight: filter === id ? 600 : 400, border: `1px solid ${filter === id ? ACCENT : LINE}`, background: filter === id ? '#FBEADF' : '#fff', color: filter === id ? ACCENT : INK }}>{label} {counts[id] || 0}</button>
-              ))}
-            </div>
-            {listView.length === 0 ? (
-              <div style={{ fontSize: 13, color: MUTE, padding: '6px 0' }}>{filter === 'toscore' ? 'Nothing waiting — generate a prompt and it lands here until you log how it did.' : 'Nothing here yet.'}</div>
-            ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 8 }}>
-                {listView.map((h) => {
-                  const m = statusMeta(h)
-                  const open = cur && cur.id === h.id
-                  const waiting = (h.status === 'queued' || h.status === 'posted') && daysSince(h) >= 3
-                  return (
-                    <button key={h.id} onClick={() => openEntry(h)} style={{ textAlign: 'left', cursor: 'pointer', border: `1px solid ${open ? ACCENT : LINE}`, background: open ? '#FBEADF' : '#fff', borderRadius: 10, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <span style={{ width: 9, height: 9, borderRadius: '50%', background: m.color, flexShrink: 0 }} />
-                      <span style={{ flex: 1, minWidth: 0 }}>
-                        <span style={{ fontSize: 12.5, fontWeight: 600, display: 'block' }}>{h.scenario}{h.hook ? ' · hook' : ''}{h.multiShot ? ' · multi' : ''}</span>
-                        <span style={{ fontSize: 12, color: MUTE, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.title || snippet(h.text)}</span>
-                      </span>
-                      <span style={{ fontSize: 11, textAlign: 'right', flexShrink: 0, color: waiting ? '#B07A0B' : MUTE }}>
-                        <span style={{ display: 'block', color: m.color, fontWeight: 600 }}>{m.label}</span>
-                        <span>{ago(h)}</span>
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        )}
       </div>
     </div>
   )

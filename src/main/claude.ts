@@ -16,6 +16,32 @@ export interface ClaudeOptions {
   allowedTools?: string[]
 }
 
+/**
+ * Extract the CLI's JSON result envelope from stdout. The CLI (or an MCP
+ * server it loads) can print stray diagnostic lines to stdout alongside the
+ * envelope, which breaks a whole-output JSON.parse — so fall back to scanning
+ * line by line for the object that carries the result.
+ */
+function parseEnvelope(out: string): any | null {
+  const trimmed = out.trim()
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    /* stdout is not pure JSON — scan for the envelope line */
+  }
+  for (const line of trimmed.split(/\r?\n/)) {
+    const s = line.trim()
+    if (!s.startsWith('{')) continue
+    try {
+      const j = JSON.parse(s)
+      if (j && typeof j === 'object' && ('result' in j || j.type === 'result')) return j
+    } catch {
+      /* not this line */
+    }
+  }
+  return null
+}
+
 /** Resolve an absolute path to the claude CLI, or null if not found. */
 export function detectCli(override?: string): string | null {
   if (override && override.trim() && existsSync(override.trim())) return override.trim()
@@ -101,8 +127,8 @@ export function callClaude(userContent: string, opts: ClaudeOptions): Promise<st
         reject(new Error(err.trim() || `Claude CLI exited with code ${code}.`))
         return
       }
-      try {
-        const json = JSON.parse(out)
+      const json = parseEnvelope(out)
+      if (json) {
         if (json.is_error) {
           log('err', `${tag}Model returned an error after ${secs}s.`)
           reject(new Error(json.result || 'Claude returned an error.'))
@@ -111,8 +137,8 @@ export function callClaude(userContent: string, opts: ClaudeOptions): Promise<st
         const result = String(json.result || '').trim()
         log('ok', `${tag}Received ${result.length} chars in ${secs}s.`)
         resolve(result)
-      } catch {
-        // Not JSON — return raw text as a fallback.
+      } else {
+        // No envelope found anywhere in stdout — return raw text as a fallback.
         const result = out.trim()
         log('ok', `${tag}Received ${result.length} chars in ${secs}s (raw).`)
         resolve(result)
