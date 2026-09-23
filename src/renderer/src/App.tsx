@@ -5,7 +5,7 @@ import {
 import { REACH, ILLUSION_TAGS, AIRCRAFT, CAMERA, CROWD, ENV, REGION, SCENARIOS, groupScenarios, pickRandomScenario } from '@shared/domain'
 import { snippet, toFilename, splitSections, parseViews } from '@shared/util'
 import { topInsights } from '@shared/brain'
-import type { AppConfig, Entry, ReachId, LogLine, LogLevel, Scenario } from '@shared/types'
+import type { AppConfig, Entry, ReachId, LogLine, LogLevel, Scenario, SavedConcept } from '@shared/types'
 import { Settings } from './Settings'
 import { History } from './History'
 
@@ -116,6 +116,9 @@ export function App() {
   const [nudge, setNudge] = useState('')
   const [explore, setExplore] = useState(45)
 
+  const [savedConcepts, setSavedConcepts] = useState<SavedConcept[]>([])
+  const [conceptLoading, setConceptLoading] = useState(false)
+
   const [loading, setLoading] = useState(false)
   // How many learn tasks are running in the background (a counter, not a flag,
   // so overlapping submits don't switch the indicator off too early).
@@ -150,6 +153,7 @@ export function App() {
       setExplore(cfg.defaults.explore); setHook(cfg.defaults.hook); setMultiShot(cfg.defaults.multiShot)
       setHistory(await window.api.getHistory())
       setPlaybook(await window.api.getPlaybook())
+      if (typeof window.api?.getSavedConcepts === 'function') setSavedConcepts(await window.api.getSavedConcepts())
     })()
   }, [])
 
@@ -227,22 +231,38 @@ export function App() {
     setError(''); setCurrent(null); setCandidates([]); setPickedTags([]); setComment(''); setReachDraft(null); setExcludeCoverage(false); setViewsDraft(''); setNudge('')
   }
 
-  async function generate() {
+  // A saved concept behaves exactly like a fixed Scenario once resolved — same
+  // id shape ('concept:<id>') an entry generated from it would carry, so
+  // future generations/remixes/stats all attribute back to this one id.
+  function conceptScenario(c: SavedConcept): Scenario {
+    return { id: `concept:${c.id}`, label: c.label, group: 'AI Concepts', brief: c.brief }
+  }
+
+  function resolveScenario(id: string): Scenario | undefined {
+    return SCENARIOS.find((s) => s.id === id) || (() => {
+      const saved = savedConcepts.find((c) => `concept:${c.id}` === id)
+      return saved ? conceptScenario(saved) : undefined
+    })()
+  }
+
+  // Shared by the scenario-select path, the Random pick, and the AI concept
+  // path — all three just need a resolved Scenario to run the same request.
+  async function generateFrom(resolved: Scenario) {
     if (loading) return
     resetScoringDraft()
-    // Weighted pick: proven-viral scenarios (weight > 1) come up more often,
-    // further steered by actual win-rate history and the Exploration slider.
-    const resolved = scenario === 'random' ? pickRandomScenario(history, explore) : SCENARIOS.find((s) => s.id === scenario)!
     const req = buildReq(resolved)
+    // AI concepts have no static home to look their brief up from later
+    // (unlike fixed scenarios, which stay in SCENARIOS by id) — stash it here.
+    const extra: Partial<Entry> = resolved.id.startsWith('concept:') ? { conceptBrief: resolved.brief } : {}
     try {
       if (candidateMode) {
         // ONE CLI call returns all candidates (separated server-side); titles
         // are deferred — only the chosen one gets a title in chooseCandidate.
         const results = await window.api.generateBatch({ ...req, skipTitle: true, candidates: 3 })
         if (!results.length) throw new Error('Candidate generation failed.')
-        setCandidates(results.map((r, i) => ({ ...buildEntry(resolved, r), id: Date.now() + i })))
+        setCandidates(results.map((r, i) => ({ ...buildEntry(resolved, r, extra), id: Date.now() + i })))
       } else {
-        const entry = buildEntry(resolved, await window.api.generate(req))
+        const entry = buildEntry(resolved, await window.api.generate(req), extra)
         setCurrent(entry); persist((prev) => [entry, ...prev])
       }
     } catch (e: any) {
@@ -250,15 +270,54 @@ export function App() {
     } finally { setLoading(false) }
   }
 
+  async function generate() {
+    // Weighted pick: proven-viral scenarios (weight > 1) come up more often,
+    // further steered by actual win-rate history and the Exploration slider.
+    const resolved = scenario === 'random' ? pickRandomScenario(history, explore) : resolveScenario(scenario)
+    if (!resolved) return
+    await generateFrom(resolved)
+  }
+
+  // Ask the model to invent a brand-new one-off concept, then generate from
+  // it immediately — a separate loading flag so this button's own busy state
+  // doesn't fight the main "Generate prompt" button's.
+  async function surpriseConcept() {
+    if (loading || conceptLoading) return
+    setConceptLoading(true)
+    try {
+      const { label, brief } = await window.api.suggestConcept()
+      await generateFrom({ id: `concept:${Date.now()}`, label, group: 'AI Concepts', brief })
+    } catch (e: any) {
+      setError(e?.message || 'Could not invent a concept. Check Settings → Test connection.')
+    } finally {
+      setConceptLoading(false)
+    }
+  }
+
+  // Promote a one-off AI concept into the saved library so it can be picked
+  // from the Scenario dropdown and reused later — then re-tag this entry to
+  // the saved concept's stable id so future stats/coverage attribute to it
+  // consistently instead of the ephemeral one-off id it was generated under.
+  async function saveThisConcept(entry: Entry) {
+    if (!entry.scenarioId?.startsWith('concept:')) return
+    const saved = await window.api.saveConcept({ label: entry.scenario, brief: entry.conceptBrief || '', sourceEntryId: entry.id })
+    setSavedConcepts((prev) => [saved, ...prev])
+    const stableId = `concept:${saved.id}`
+    if (entry.scenarioId !== stableId) updateEntry({ scenarioId: stableId })
+    flashToast('Concept saved ✓')
+  }
+
   // Double down on a proven winner: fresh prompt that keeps its winning
   // ingredients but changes aircraft/setting so it never reads as a repost.
   async function remixWinner(source: Entry) {
     if (loading) return
     resetScoringDraft()
-    const resolved = SCENARIOS.find((s) => s.id === source.scenarioId) || pickRandomScenario(history, explore)
+    const resolved = SCENARIOS.find((s) => s.id === source.scenarioId)
+      || (source.scenarioId?.startsWith('concept:') ? { id: source.scenarioId, label: source.scenario, group: 'AI Concepts', brief: source.conceptBrief || '' } : undefined)
+      || pickRandomScenario(history, explore)
     try {
       const res = await window.api.generate({ ...buildReq(resolved), remixText: source.text })
-      const entry = buildEntry(resolved, res, { remixOf: source.id })
+      const entry = buildEntry(resolved, res, { remixOf: source.id, conceptBrief: source.conceptBrief })
       setCurrent(entry); persist((prev) => [entry, ...prev])
       flashToast('Remix ready ✓')
     } catch (e: any) {
@@ -432,7 +491,13 @@ export function App() {
                 {groupScenarios().map(([group, items]) => group === ''
                   ? items.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)
                   : <optgroup key={group} label={group}>{items.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}</optgroup>)}
+                {savedConcepts.length > 0 && (
+                  <optgroup label="AI Concepts (saved)">
+                    {savedConcepts.map((c) => <option key={c.id} value={`concept:${c.id}`}>{c.label}</option>)}
+                  </optgroup>
+                )}
               </select>
+              <button onClick={surpriseConcept} disabled={conceptLoading} title="Ask the model to invent a brand-new one-off concept and generate from it" style={{ ...ghostBtn, marginTop: 8, width: '100%', opacity: conceptLoading ? 0.6 : 1 }}>{conceptLoading ? 'Inventing…' : '💡 Surprise concept'}</button>
             </div>
 
             <div><div style={lbl}>Aircraft</div><select value={aircraft} onChange={(e) => setAircraft(e.target.value)} style={sel}>{AIRCRAFT.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}</select></div>
@@ -658,6 +723,9 @@ export function App() {
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', borderTop: `1px solid ${LINE}`, paddingTop: 12, marginTop: 12 }}>
                   {cur && cur.status === 'scored' && (cur.reach === 'good' || cur.reach === 'viral') && (
                     <button onClick={() => remixWinner(cur)} title="Generate a fresh prompt that keeps this winner's ingredients but changes the aircraft/setting" style={{ ...ghostBtn, color: ACCENT, borderColor: ACCENT, fontWeight: 600 }}>↻ Remix this winner</button>
+                  )}
+                  {cur && cur.scenarioId?.startsWith('concept:') && !savedConcepts.some((c) => `concept:${c.id}` === cur.scenarioId) && (
+                    <button onClick={() => saveThisConcept(cur)} title="Save this AI-invented concept so it can be picked and reused from the Scenario dropdown" style={ghostBtn}>💾 Save this concept</button>
                   )}
                   {cur && cur.status !== 'scored' && <button onClick={() => updateEntry({ status: 'posted', postedAt: (cur && cur.postedAt) || Date.now() })} style={ghostBtn}>Mark as posted</button>}
                   <button onClick={() => updateEntry({ status: 'skipped' })} style={{ ...ghostBtn, color: MUTE }}>Couldn't use this one</button>

@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
-  AppConfig, Entry, GenerateRequest, GenerateResult, LearningLogEntry, CliTestResult, LogLine,
+  AppConfig, Entry, GenerateRequest, GenerateResult, LearningLogEntry, CliTestResult, LogLine, SavedConcept,
 } from '../shared/types'
 
 const api = {
@@ -30,6 +30,11 @@ const api = {
   setDataDir: (dir: string): Promise<{ ok: boolean; message: string; dir: string }> => ipcRenderer.invoke('data:setDir', dir),
   browseDataDir: (): Promise<string> => ipcRenderer.invoke('data:browse'),
   resetMemory: (): Promise<boolean> => ipcRenderer.invoke('memory:reset'),
+  /** Invent a fresh one-off scenario concept (see CONCEPT_SYSTEM in shared/prompts). */
+  suggestConcept: (): Promise<{ label: string; brief: string }> => ipcRenderer.invoke('concept:suggest'),
+  getSavedConcepts: (): Promise<SavedConcept[]> => ipcRenderer.invoke('concepts:get'),
+  saveConcept: (payload: { label: string; brief: string; sourceEntryId?: number }): Promise<SavedConcept> => ipcRenderer.invoke('concepts:save', payload),
+  deleteConcept: (id: number): Promise<SavedConcept[]> => ipcRenderer.invoke('concepts:delete', id),
   /** Subscribe to real-time activity log lines. Returns an unsubscribe fn. */
   onLog: (cb: (line: LogLine) => void): (() => void) => {
     const handler = (_e: unknown, line: LogLine): void => cb(line)

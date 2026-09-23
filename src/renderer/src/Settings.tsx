@@ -3,7 +3,7 @@ import { INK, PAPER, LINE, MUTE, ACCENT, GOOD, BAD, SCREEN, SCREEN_TX, lbl, sel,
 import { AIRCRAFT, CAMERA, CROWD, ENV, groupScenarios } from '@shared/domain'
 import { trendMasterPrompt } from '@shared/prompts'
 import { winRateStats, comboWinRates, operatorFrequency, DEFAULT_WIN_RATE_DIMS } from '@shared/brain'
-import type { AppConfig, CliTestResult, Entry, LogLine, LogLevel } from '@shared/types'
+import type { AppConfig, CliTestResult, Entry, LogLine, LogLevel, SavedConcept } from '@shared/types'
 
 const LOG_COLORS: Record<LogLevel, string> = { info: '#9c968a', step: '#f2a55e', ok: '#7fc59c', warn: '#e2b53c', err: '#ff8a6b' }
 function logTime(ts: number): string { const d = new Date(ts); const p = (n: number) => String(n).padStart(2, '0'); return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}` }
@@ -47,9 +47,16 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
   const [history, setHistory] = useState<Entry[]>([])
   const [redistilling, setRedistilling] = useState(false)
   const [pbMsg, setPbMsg] = useState('')
+  const [savedConcepts, setSavedConcepts] = useState<SavedConcept[]>([])
 
   useEffect(() => { window.api.getDataDir().then(setDataPath) }, [])
   useEffect(() => { window.api.getHistory().then(setHistory) }, [])
+  useEffect(() => { if (typeof window.api?.getSavedConcepts === 'function') window.api.getSavedConcepts().then(setSavedConcepts) }, [])
+
+  async function deleteConcept(id: number) {
+    if (!confirm('Delete this saved concept? It stays in your history, but you won\'t be able to pick it from the Scenario dropdown anymore.')) return
+    setSavedConcepts(await window.api.deleteConcept(id))
+  }
 
   // Live backend activity — the same stream the lab shows, surfaced here so
   // long Settings operations (web research, re-distill, backfill, test) are visible.
@@ -390,6 +397,28 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
                         </div>
                       </div>
                     )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+
+          <Card title="AI Concepts · saved library">
+            <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>
+              Concepts you've saved from "💡 Surprise concept" in the lab — pick one from the Scenario dropdown to reuse it. Deleting one here only removes it from that dropdown; past clips generated from it stay in your history.
+            </div>
+            {savedConcepts.length === 0 ? (
+              <div style={{ fontSize: 13, color: MUTE }}>None saved yet — generate one with "💡 Surprise concept" in the lab, then "💾 Save this concept" if you like it.</div>
+            ) : (
+              <div style={{ display: 'grid', gap: 10 }}>
+                {savedConcepts.map((c) => (
+                  <div key={c.id} style={{ border: `1px solid ${LINE}`, borderRadius: 9, padding: '9px 12px', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700 }}>{c.label}</div>
+                      <div style={{ fontSize: 12, color: MUTE, marginTop: 2 }}>{c.brief}</div>
+                      <div style={{ fontSize: 11, color: MUTE, marginTop: 4 }}>Saved {new Date(c.createdAt).toLocaleString()}</div>
+                    </div>
+                    <button onClick={() => deleteConcept(c.id)} style={{ ...ghostBtn, color: BAD, borderColor: BAD, flexShrink: 0 }}>Delete</button>
                   </div>
                 ))}
               </div>

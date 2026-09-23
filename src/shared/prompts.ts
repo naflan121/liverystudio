@@ -71,6 +71,35 @@ export function extractMsg(text: string): string {
   return `Prompt:\n\n${text}`
 }
 
+export const CONCEPT_SYSTEM = `You invent ONE brand-new short-form video CONCEPT for a page that posts RC scale-model aircraft videos filmed to look like genuine full-size aviation footage, optimised for social reach — the "is this real?" illusion. You are given the page's learned playbook (what has worked) and a list of concepts already tried or saved, so you can invent something GENUINELY DIFFERENT, not a reskin of one of them.
+
+A concept is a short-form video FORMAT/SITUATION — like "a ramp launch into a long dead-stick glide that ends in a lake splash" or "a release from a tall structure into a dead-stick glide" — NOT a specific prompt with an aircraft or setting already chosen (those stay separate levers). Think about: an unusual launch, release, or recovery mechanic; an unexpected location or vantage point; a hook rooted in real RC/aviation practice; or a novel camera/crew choreography. The physics must stay MODEL-plausible throughout — this is always a lightweight RC scale model, never a literal full-size aircraft, however real it is meant to look.
+
+Output EXACTLY two lines and nothing else, each on a SINGLE line:
+LABEL: <a short punchy 3-6 word name for this concept>
+BRIEF: <2-4 sentences on one line describing the scene, camera behavior, and payoff moment — concrete and filmable, written the way an existing scenario brief reads. Do not mention a specific aircraft, airline, or livery — those are separate levers.>
+No preamble, no commentary, no markdown, no numbering.`
+
+export function buildConceptMessage(playbook: string, triedConcepts: string[], trends = ''): string {
+  const parts = [
+    'Invent one fresh concept now, following the system instructions exactly.',
+    playbook && playbook.trim() ? `LEARNED PLAYBOOK (what has worked on this page so far):\n${playbook.trim()}` : '',
+    triedConcepts.length ? `CONCEPTS ALREADY TRIED OR SAVED — your new one must be clearly different in mechanic and setting from every one of these:\n${triedConcepts.map((c) => '- ' + c).join('\n')}` : '',
+    trends && trends.trim() ? `CURRENT TRENDS (use only if it inspires a genuinely fresh angle, never force it):\n${trends.trim()}` : '',
+  ].filter(Boolean)
+  return parts.join('\n\n')
+}
+
+/** Parse CONCEPT_SYSTEM's two-line LABEL/BRIEF output; missing → sensible fallback. */
+export function parseConcept(raw: string): { label: string; brief: string } {
+  const grab = (label: string): string => {
+    const line = raw.split(/\r?\n/).find((l) => l.trim().toUpperCase().startsWith(label))
+    if (!line) return ''
+    return line.slice(line.indexOf(':') + 1).trim()
+  }
+  return { label: grab('LABEL:') || 'AI concept', brief: grab('BRIEF:') }
+}
+
 /** Parse the two-line EXTRACT_SYSTEM output into scene facts; missing/NONE → ''. */
 export function parseScene(raw: string): { aircraft: string; environment: string } {
   const grab = (label: string): string => {

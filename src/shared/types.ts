@@ -54,6 +54,8 @@ export interface Entry {
   useTrends?: boolean
   /** The user's one-off direction for this prompt — key evidence for the learner (overrides the levers). */
   nudge?: string
+  /** The AI-invented scenario brief, present when scenarioId starts with 'concept:' (one-off or generated from a saved concept). Fixed scenarios don't need this — their brief lives in SCENARIOS by id — but an invented one has no static home. */
+  conceptBrief?: string
   /** User opt-out: when true, this entry is never added to airline coverage, even on a Good/Viral score. */
   excludeCoverage?: boolean
   crowd: string
@@ -145,4 +147,16 @@ export interface CliTestResult {
   ok: boolean
   path: string
   message: string
+}
+
+/** A user-saved AI-invented concept (see CONCEPT_SYSTEM) — a small curated
+ *  library separate from the learned playbook, so a good one-off invention
+ *  can be reused as if it were a regular Scenario (id becomes `concept:<id>`). */
+export interface SavedConcept {
+  id: number
+  label: string
+  brief: string
+  createdAt: string
+  /** id of the Entry this was promoted from, for traceability. */
+  sourceEntryId?: number
 }

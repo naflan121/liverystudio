@@ -4,12 +4,12 @@ import { callClaude, testCli } from './claude'
 import {
   getConfig, setConfig, getHistory, setHistory, getPlaybook, setPlaybook,
   getPlaybookVersions, appendLearningLog, getLearningLog, resetMemory, dataDir, setDataDir,
-  getTrends, setTrends,
+  getTrends, setTrends, getSavedConcepts, setSavedConcepts,
 } from './store'
-import { SYSTEM, TITLE_SYSTEM, LEARN_SYSTEM, EXTRACT_SYSTEM, TREND_SYSTEM, CAPTION_SYSTEM, LONG_PROMPT_CHARS, buildUserMessage, titleMsg, captionMsg, buildLearnMessage, buildRedistillMessage, extractMsg, parseScene, trendsMsg, parseVariants } from '../shared/prompts'
+import { SYSTEM, TITLE_SYSTEM, LEARN_SYSTEM, EXTRACT_SYSTEM, TREND_SYSTEM, CAPTION_SYSTEM, CONCEPT_SYSTEM, LONG_PROMPT_CHARS, buildUserMessage, titleMsg, captionMsg, buildLearnMessage, buildRedistillMessage, buildConceptMessage, extractMsg, parseScene, parseConcept, trendsMsg, parseVariants } from '../shared/prompts'
 import { cleanTitle, toFilename, clampPlaybook } from '../shared/util'
 import { overusedOperators } from '../shared/brain'
-import type { GenerateRequest, Entry, LogLevel } from '../shared/types'
+import type { GenerateRequest, Entry, LogLevel, SavedConcept } from '../shared/types'
 
 let win: BrowserWindow | null = null
 
@@ -113,6 +113,17 @@ function recentAnyCombos(history: Entry[], scenarioId: string): string[] {
 // the page's actual pick frequency instead, regardless of scenario.
 function overusedAircraft(history: Entry[]): string[] {
   return overusedOperators(history).map((r) => r.label)
+}
+
+// Concepts already tried (one-off or from a saved concept) or explicitly
+// saved — fed back to the concept-inventor so it doesn't reinvent one.
+const CONCEPT_MEMORY = 10
+function triedConceptBriefs(history: Entry[], saved: SavedConcept[]): string[] {
+  const fromHistory = history
+    .filter((h) => h.scenarioId && h.scenarioId.startsWith('concept:') && h.conceptBrief && h.conceptBrief.trim())
+    .map((h) => `${h.scenario}: ${h.conceptBrief!.trim()}`)
+  const fromSaved = saved.map((c) => `${c.label}: ${c.brief}`)
+  return [...new Set([...fromSaved, ...fromHistory])].slice(0, CONCEPT_MEMORY)
 }
 
 // Settings/environments that have done well for one scenario — fed only when the
@@ -421,6 +432,34 @@ function registerIpc(): void {
       throw e
     }
   }))
+
+  // --- AI-invented concepts: "Surprise concept" + a small saved library --------
+  ipcMain.handle('concept:suggest', () => exclusive(async () => {
+    const cfg = getConfig()
+    const playbook = getPlaybook()
+    const history = getHistory()
+    const saved = getSavedConcepts()
+    const trends = getTrends().text
+    emitLog('step', 'Inventing a fresh concept…')
+    const raw = await callClaude(buildConceptMessage(playbook, triedConceptBriefs(history, saved), trends), {
+      cliPath: cfg.cliPath, model: cfg.generationModel, timeoutMs: cfg.timeoutMs, system: CONCEPT_SYSTEM, label: 'concept', onLog: claudeLog,
+    })
+    const concept = parseConcept(raw)
+    emitLog('ok', `Concept ready: "${concept.label}"`)
+    return concept
+  }))
+  ipcMain.handle('concepts:get', () => getSavedConcepts())
+  ipcMain.handle('concepts:save', (_e, payload: { label: string; brief: string; sourceEntryId?: number }) => {
+    const saved: SavedConcept = { id: Date.now(), label: payload.label, brief: payload.brief, createdAt: new Date().toISOString(), sourceEntryId: payload.sourceEntryId }
+    setSavedConcepts([saved, ...getSavedConcepts()])
+    emitLog('ok', `Concept saved: "${saved.label}"`)
+    return saved
+  })
+  ipcMain.handle('concepts:delete', (_e, id: number) => {
+    const next = getSavedConcepts().filter((c) => c.id !== id)
+    setSavedConcepts(next)
+    return next
+  })
 }
 
 // Allow only one running copy. A second launch focuses the existing window

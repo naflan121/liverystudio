@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
-import type { AppConfig, Entry, LearningLogEntry } from '../shared/types'
+import type { AppConfig, Entry, LearningLogEntry, SavedConcept } from '../shared/types'
 
 // Per-device bootstrap pointer (always in this machine's userData). It records
 // WHERE the actual data lives, so each Windows device can independently point at
@@ -91,7 +91,7 @@ export function dataDir(): string {
   return app.getPath('userData')
 }
 
-const FILES = ['config.json', 'history.json', 'playbook.md', 'playbook-versions.json', 'learning-log.jsonl', 'trends.json']
+const FILES = ['config.json', 'history.json', 'playbook.md', 'playbook-versions.json', 'learning-log.jsonl', 'trends.json', 'concepts.json']
 
 /** Point the app at a new data folder; copy existing files over if the target lacks them. */
 export function setDataDir(dir: string): { ok: boolean; message: string; dir: string } {
@@ -223,6 +223,18 @@ export function setTrends(text: string): { text: string; updatedAt: string } {
   const v = { text: text.trim(), updatedAt: new Date().toISOString() }
   writeJson(p('trends.json'), v)
   return v
+}
+
+// --- Saved concepts (user-curated library of AI-invented formats) --------------
+// Deliberately NOT wiped by resetMemory() below — these are things the user
+// explicitly chose to keep, not accumulated learning drift.
+
+export function getSavedConcepts(): SavedConcept[] {
+  return readJson<SavedConcept[]>(p('concepts.json'), [])
+}
+
+export function setSavedConcepts(list: SavedConcept[]): void {
+  writeJson(p('concepts.json'), list)
 }
 
 export function resetMemory(): void {

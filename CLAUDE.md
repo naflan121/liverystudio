@@ -104,6 +104,37 @@ invent a fresh short announcer line each run — optionally playing on the chose
 airline/aircraft. SYSTEM gained unpowered/dead-stick exceptions (no motor
 audio; crew hands replace the FPV-pilot scale cue).
 
+### Feedback Brain (branch `feedback-brain`)
+`shared/brain.ts` computes real stats straight from `history.json` — win rates
+per lever value and per scenario×camera combo, and a GLOBAL (all-scenario)
+aircraft/operator overuse check. This grounds two things that used to run on
+LLM narrative alone: `buildRedistillMessage` now prepends a computed
+"STATISTICAL EVIDENCE" block instead of trusting the model to spot patterns in
+a raw list, and `main/index.ts`'s avoid-lists now also block an operator
+overused *across* scenarios (the old `recentCombos`/`recentAnyCombos` were
+each scoped to one scenario's own recency window and never caught that).
+`pickRandomScenario()` (`domain.ts`) also blends each scenario's real win rate
+into its pick weight, gated by the Exploration slider — low explore leans into
+proven scenarios, high explore flattens back toward the static weights and
+boosts scenarios with too little data to judge yet. Settings' win-rate card
+and the lab's "Brain says" strip both read from this same module.
+
+### AI-invented concepts ("Surprise concept")
+A "💡 Surprise concept" button (next to the Scenario select) asks the model to
+invent a brand-new short-form concept from scratch — grounded in the playbook
+and an avoid-list of concepts already tried/saved (`CONCEPT_SYSTEM` /
+`buildConceptMessage` / `parseConcept` in `prompts.ts`, `concept:suggest` IPC
+in `main/index.ts`) — and generates from it immediately. The result is just a
+synthetic `Scenario` (`id: 'concept:<id>'`), so it flows through
+`buildUserMessage` exactly like any other open scenario with no special-casing
+needed. A good one-off can be promoted via "💾 Save this concept" into a small
+user-curated library (`concepts.json`, `SavedConcept` in `types.ts`,
+`getSavedConcepts`/`setSavedConcepts` in `store.ts`) — deliberately **not**
+wiped by "Reset all memory", since it's content the user chose to keep, not
+learned drift. Saved concepts appear in the Scenario dropdown and in a
+Settings card for management. `Entry.conceptBrief` carries the invented brief
+text, since (unlike fixed scenarios) it has no static home to look it up from.
+
 ## Adding a new lever (the common task)
 
 A lever flows through four files — keep them in sync:
