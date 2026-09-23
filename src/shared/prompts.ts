@@ -37,8 +37,9 @@ VARIETY: vary environment, lighting, and camera every time. Do not reuse a scene
 
 export const TITLE_SYSTEM = `You write ONE title for a social RC scale-model aircraft video (Facebook Reels, YouTube Shorts). It doubles as SEO, so it must be search-friendly and VARIED — never a fixed template. The clip shows an RC model filmed to look incredibly real; the honest hook is how real the RC looks, NOT a claim that it is a real aircraft. Rules:
 - It MUST make clear this is RC or a scale model (include "RC" or "scale model").
-- Vary the angle every single time — rotate between: a question, the aircraft type plus the maneuver, astonishment at the scale or size, the realism, the airshow or location, the rarity of the type. Do NOT reuse the same sentence structure twice.
-- Lead with the words a viewer would actually search for or stop on (the aircraft type, "RC", the action).
+- IDENTIFYING CONTEXT IS MANDATORY, NEVER OPTIONAL: read the prompt's Visual section for the named aircraft. If it names a specific airline/operator and aircraft model — anything other than the literal "[MODEL NAME]" placeholder token — you MUST include that airline and model in the title (e.g. "Emirates A380", "USAF F-16"), every single time, so the title — and the filename saved from it — stays identifiable at a glance. This is not one of the rotating options below; it never rotates out. If the prompt instead uses the "[MODEL NAME]" placeholder (no aircraft decided yet — the livery comes from a reference image supplied separately), there is nothing to name: lean on the scenario, maneuver, or location instead.
+- Vary the FRAMING every single time — rotate between: a question, the maneuver, astonishment at the scale or size, the realism, the airshow or location, the rarity of the type — but always keep the mandatory airline+model naming above intact within whichever framing you pick. Do NOT reuse the same sentence structure twice.
+- Lead with the words a viewer would actually search for or stop on (the airline/aircraft, "RC", the action).
 - Under 70 characters; plain text only; no quotation marks, no markdown, no hashtags, no emojis, and none of these characters \\ / : * ? " < > |.
 Output only the title, nothing else.`
 
