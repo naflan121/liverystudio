@@ -294,7 +294,24 @@ NEGATIVE SECTION must ALSO include: aircraft moving backwards, aircraft travelli
 
   if (punchyOpen) parts.push('OPENING HOOK (critical for reach): engineer the very first ~1 second to STOP THE SCROLL — open on the single most arresting, high-energy beat and a striking first frame that instantly reads as real full-size aviation, so a viewer flicking past freezes on it. No slow build-up or empty lead-in at the start. Keep it inside the shot discipline above and every realism, scale, aerodynamic and Negative rule intact — achieve it through framing, motion and timing, never cuts or CGI tricks.')
 
-  parts.push(`Exploration level: ${explore}/100. ${explore < 34 ? 'Stay close to what has scored well before.' : explore > 66 ? 'Try a fresh environment you have not used, rules intact.' : 'Balance a proven structure with one new element.'}`)
+  // sceneLocked/cliffDrop already fix the environment (and, for sceneLocked,
+  // camera too) via their own craft-rule blocks above — "try a fresh
+  // environment" would contradict an instruction the model was just told to
+  // follow exactly. Point the exploration nudge at what's actually still open
+  // for these formats: the aircraft pairing (and, for cliffDrop, the launch
+  // structure, which already has its own avoid-list above).
+  const exploreNote = (sceneLocked || cliffDrop)
+    ? (explore < 34
+      ? 'Stay close to the aircraft pairing that has scored well before for this format.'
+      : explore > 66
+      ? `Try ${cliffDrop ? 'an aircraft and structure pairing' : 'an aircraft pairing'} this format has not used, rules intact.`
+      : 'Balance a proven aircraft pairing with one new element.')
+    : (explore < 34
+      ? 'Stay close to what has scored well before.'
+      : explore > 66
+      ? 'Try a fresh environment you have not used, rules intact.'
+      : 'Balance a proven structure with one new element.')
+  parts.push(`Exploration level: ${explore}/100. ${exploreNote}`)
 
   if (extraNegatives && extraNegatives.trim()) parts.push(`Also ALWAYS include these terms in the Negative section: ${extraNegatives.trim()}.`)
 

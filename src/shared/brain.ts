@@ -107,6 +107,23 @@ export function overusedOperators(history: Entry[], sampleSize = 30): FrequencyR
   return operatorFrequency(history, { sampleSize }).filter((r) => r.count >= OVERUSE_MIN_COUNT && r.pct >= OVERUSE_PCT)
 }
 
+export interface ScenarioStat { total: number; wins: number; pct: number }
+
+// Win rate per scenario ID (not label — this is for matching against
+// SCENARIOS[].id, unlike the display-oriented 'Scenario' dim in
+// DEFAULT_WIN_RATE_DIMS which keys by label).
+export function scenarioWinRates(history: Entry[]): Record<string, ScenarioStat> {
+  const out: Record<string, ScenarioStat> = {}
+  for (const h of scoredEntries(history)) {
+    if (!h.scenarioId) continue
+    const g = (out[h.scenarioId] = out[h.scenarioId] || { total: 0, wins: 0, pct: 0 })
+    g.total++
+    if (isWin(h)) g.wins++
+  }
+  for (const k of Object.keys(out)) out[k].pct = Math.round((out[k].wins / out[k].total) * 100)
+  return out
+}
+
 // Short, human-readable + LLM-embeddable evidence lines — the strongest
 // findings only, so this stays useful as a compact UI strip.
 export function topInsights(history: Entry[]): string[] {

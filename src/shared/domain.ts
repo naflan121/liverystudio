@@ -1,4 +1,5 @@
-import type { Scenario } from './types'
+import type { Scenario, Entry } from './types'
+import { scenarioWinRates } from './brain'
 
 export const REACH = [
   { id: 'flop', label: 'Flopped', color: '#B23A2E' },
@@ -91,14 +92,38 @@ export const SCENARIOS: Scenario[] = [
 ]
 
 /** Weighted random scenario pick for the "Random" option. Scenarios carry an
- *  optional `weight` (default 1); formats with proven virality get a higher
- *  weight so random generation spends more shots on the likeliest breakouts. */
-export function pickRandomScenario(): Scenario {
+ *  optional static `weight` (default 1); formats with proven virality get a
+ *  higher weight so random generation spends more shots on the likeliest
+ *  breakouts.
+ *
+ *  On top of that static weight, this blends in the ACTUAL win-rate data from
+ *  `history` (via shared/brain.ts), gated by the Exploration slider — so the
+ *  slider does real work here, not just supply LLM prompt text:
+ *  - Low explore: strongly favor scenarios with a proven high Good/Viral rate.
+ *  - High explore: ignore past performance (flatten to the static weight) and
+ *    specifically boost scenarios with too little scored data to judge yet —
+ *    exploration should mean "try the unknown", not just "ignore the data".
+ *  - No history yet, or a scenario has under 2 scored results: falls back to
+ *    the static weight (untested formats stay at their normal odds when
+ *    explore is low, and get boosted as explore rises). */
+export function pickRandomScenario(history: Entry[] = [], explore = 45): Scenario {
   const pool = SCENARIOS.filter((s) => s.id !== 'random')
-  let r = Math.random() * pool.reduce((sum, s) => sum + (s.weight ?? 1), 0)
-  for (const s of pool) {
-    r -= s.weight ?? 1
-    if (r < 0) return s
+  const stats = scenarioWinRates(history)
+  const e = Math.min(100, Math.max(0, explore)) / 100
+  const MIN_EVIDENCE = 2
+
+  const weights = pool.map((s) => {
+    const base = s.weight ?? 1
+    const row = stats[s.id]
+    if (!row || row.total < MIN_EVIDENCE) return base * (1 + e) // untested — explore boosts it toward the unknown
+    const exploitFactor = 0.5 + row.pct / 100 // 0.5x (0% win rate) .. 1.5x (100% win rate)
+    return base * (exploitFactor * (1 - e) + 1 * e) // high explore flattens toward the static weight
+  })
+
+  let r = Math.random() * weights.reduce((sum, w) => sum + w, 0)
+  for (let i = 0; i < pool.length; i++) {
+    r -= weights[i]
+    if (r < 0) return pool[i]
   }
   return pool[pool.length - 1]
 }

@@ -230,8 +230,9 @@ export function App() {
   async function generate() {
     if (loading) return
     resetScoringDraft()
-    // Weighted pick: proven-viral scenarios (weight > 1) come up more often.
-    const resolved = scenario === 'random' ? pickRandomScenario() : SCENARIOS.find((s) => s.id === scenario)!
+    // Weighted pick: proven-viral scenarios (weight > 1) come up more often,
+    // further steered by actual win-rate history and the Exploration slider.
+    const resolved = scenario === 'random' ? pickRandomScenario(history, explore) : SCENARIOS.find((s) => s.id === scenario)!
     const req = buildReq(resolved)
     try {
       if (candidateMode) {
@@ -254,7 +255,7 @@ export function App() {
   async function remixWinner(source: Entry) {
     if (loading) return
     resetScoringDraft()
-    const resolved = SCENARIOS.find((s) => s.id === source.scenarioId) || pickRandomScenario()
+    const resolved = SCENARIOS.find((s) => s.id === source.scenarioId) || pickRandomScenario(history, explore)
     try {
       const res = await window.api.generate({ ...buildReq(resolved), remixText: source.text })
       const entry = buildEntry(resolved, res, { remixOf: source.id })
