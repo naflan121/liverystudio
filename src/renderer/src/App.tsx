@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   INK, PAPER, LINE, MUTE, ACCENT, GOOD, BAD, VIRAL, WAIT, SCREEN, SCREEN_TX, lbl, sel, ghostBtn, primaryBtn, card,
 } from './ui'
 import { REACH, ILLUSION_TAGS, AIRCRAFT, CAMERA, CROWD, ENV, REGION, SCENARIOS, groupScenarios, pickRandomScenario } from '@shared/domain'
 import { snippet, toFilename, splitSections, parseViews } from '@shared/util'
+import { topInsights } from '@shared/brain'
 import type { AppConfig, Entry, ReachId, LogLine, LogLevel, Scenario } from '@shared/types'
 import { Settings } from './Settings'
 import { History } from './History'
@@ -95,6 +96,7 @@ export function App() {
   const [view, setView] = useState<'lab' | 'settings' | 'history'>('lab')
   const [history, setHistory] = useState<Entry[]>([])
   const [playbook, setPlaybook] = useState('')
+  const brainInsights = useMemo(() => topInsights(history), [history])
 
   const [scenario, setScenario] = useState('random')
   const [aircraft, setAircraft] = useState('placeholder')
@@ -489,6 +491,13 @@ export function App() {
             <div><div style={lbl}>Exploration · {explore < 34 ? 'proven' : explore > 66 ? 'experimental' : 'balanced'}</div><input type="range" min={0} max={100} value={explore} onChange={(e) => setExplore(+e.target.value)} style={{ width: '100%', accentColor: ACCENT }} /></div>
 
             <div><div style={lbl}>Direction for this one (optional)</div><input value={nudge} onChange={(e) => setNudge(e.target.value)} placeholder="e.g. Emirates A380, dusk, packed grandstand" style={{ ...sel, boxSizing: 'border-box' }} /></div>
+
+            {brainInsights.length > 0 && (
+              <div style={{ display: 'grid', gap: 4, border: `1px solid ${LINE}`, borderRadius: 10, padding: '9px 12px', background: '#faf9f6' }}>
+                <div style={{ fontSize: 10, letterSpacing: 1.5, textTransform: 'uppercase', color: ACCENT, fontWeight: 700 }}>Brain says</div>
+                {brainInsights.map((line, i) => <div key={i} style={{ fontSize: 12.5, color: INK }}>{line}</div>)}
+              </div>
+            )}
 
             <div>
               <button onClick={generate} disabled={loading} style={{ ...primaryBtn, cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.6 : 1 }}>{loading ? 'Writing…' : 'Generate prompt'}</button>

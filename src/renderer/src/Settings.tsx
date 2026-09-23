@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import { INK, PAPER, LINE, MUTE, ACCENT, GOOD, BAD, SCREEN, SCREEN_TX, lbl, sel, ghostBtn } from './ui'
 import { AIRCRAFT, CAMERA, CROWD, ENV, groupScenarios } from '@shared/domain'
 import { trendMasterPrompt } from '@shared/prompts'
+import { winRateStats, comboWinRates, operatorFrequency, DEFAULT_WIN_RATE_DIMS } from '@shared/brain'
 import type { AppConfig, CliTestResult, Entry, LogLine, LogLevel } from '@shared/types'
 
 const LOG_COLORS: Record<LogLevel, string> = { info: '#9c968a', step: '#f2a55e', ok: '#7fc59c', warn: '#e2b53c', err: '#ff8a6b' }
@@ -83,34 +84,17 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
 
   // Win rates per lever value, from scored history. A "win" is Good or Viral.
   // Only values with 2+ scored clips are shown — one data point isn't a signal.
-  const winRates = useMemo(() => {
-    const scored = history.filter((h) => h.status === 'scored' && h.reach)
-    const dims: { title: string; key: (h: Entry) => string }[] = [
-      { title: 'Reach Boost — A/B (report biases)', key: (h) => (h.boost ? 'boost ON' : 'boost off') },
-      { title: 'Scenario', key: (h) => h.scenario },
-      { title: 'Aircraft mode', key: (h) => h.aircraft },
-      { title: 'Crowd', key: (h) => h.crowd },
-      { title: 'Environment', key: (h) => h.env },
-      { title: 'Camera', key: (h) => h.camera || 'auto' },
-      { title: 'Hook mode', key: (h) => (h.hook ? 'hook on' : 'hook off') },
-      { title: 'Punchy open', key: (h) => (h.punchyOpen ? 'punchy open' : 'normal open') },
-    ]
-    return dims.map(({ title, key }) => {
-      const groups: Record<string, { wins: number; total: number }> = {}
-      for (const h of scored) {
-        const k = (key(h) || '').trim()
-        if (!k) continue
-        const g = (groups[k] = groups[k] || { wins: 0, total: 0 })
-        g.total++
-        if (h.reach === 'good' || h.reach === 'viral') g.wins++
-      }
-      const rows = Object.entries(groups)
-        .filter(([, g]) => g.total >= 2)
-        .map(([label, g]) => ({ label, wins: g.wins, total: g.total, pct: Math.round((g.wins / g.total) * 100) }))
-        .sort((a, b) => b.pct - a.pct || b.total - a.total)
-      return { title, rows }
-    }).filter((d) => d.rows.length > 0)
-  }, [history])
+  // Computation lives in shared/brain.ts so the same numbers that get fed into
+  // the learn/redistill prompts are what's shown here.
+  const winRates = useMemo(() => winRateStats(history, DEFAULT_WIN_RATE_DIMS), [history])
+
+  // Scenario x camera combos — surfaces combo-level winners the single-lever
+  // view above can hide (e.g. a camera that only shines on one scenario).
+  const bestCombos = useMemo(() => comboWinRates(history, (h) => h.scenario, (h) => h.camera || 'auto').slice(0, 8), [history])
+
+  // Global (all-scenario) pick frequency — the same numbers that drive the
+  // "avoid overused operators" steering in generation, made visible here.
+  const overused = useMemo(() => operatorFrequency(history, { sampleSize: 30 }).filter((r) => r.count >= 4 && r.pct >= 25), [history])
 
   // Previous playbook versions (snapshotted on every overwrite) for rollback.
   const [pbVersions, setPbVersions] = useState<{ ts: string; text: string }[]>([])
@@ -334,6 +318,35 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+            {bestCombos.length > 0 && (
+              <div>
+                <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>Best combos · scenario &times; camera</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+                  {bestCombos.map((c) => (
+                    <span key={c.a + '|' + c.b} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${LINE}`, borderRadius: 20, padding: '5px 12px', fontSize: 12.5, background: '#faf9f6' }}>
+                      {c.a} &middot; {c.b}
+                      <strong style={{ color: c.pct >= 50 ? GOOD : c.pct >= 25 ? INK : BAD }}>{c.wins}/{c.total}</strong>
+                      <span style={{ color: MUTE }}>{c.pct}%</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {overused.length > 0 && (
+              <div>
+                <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6, color: BAD }}>Overused &middot; currently avoided in generation</div>
+                <div style={{ fontSize: 12, color: MUTE, marginBottom: 6 }}>Aircraft/operators eating a disproportionate share of the last 30 picks page-wide — new generations actively steer away from these regardless of scenario.</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+                  {overused.map((o) => (
+                    <span key={o.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${BAD}`, borderRadius: 20, padding: '5px 12px', fontSize: 12.5, background: '#fff' }}>
+                      {o.label}
+                      <strong style={{ color: BAD }}>{o.count}/{o.total}</strong>
+                      <span style={{ color: MUTE }}>{o.pct}%</span>
+                    </span>
+                  ))}
+                </div>
               </div>
             )}
           </Card>

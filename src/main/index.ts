@@ -8,6 +8,7 @@ import {
 } from './store'
 import { SYSTEM, TITLE_SYSTEM, LEARN_SYSTEM, EXTRACT_SYSTEM, TREND_SYSTEM, CAPTION_SYSTEM, LONG_PROMPT_CHARS, buildUserMessage, titleMsg, captionMsg, buildLearnMessage, buildRedistillMessage, extractMsg, parseScene, trendsMsg, parseVariants } from '../shared/prompts'
 import { cleanTitle, toFilename, clampPlaybook } from '../shared/util'
+import { overusedOperators } from '../shared/brain'
 import type { GenerateRequest, Entry, LogLevel } from '../shared/types'
 
 let win: BrowserWindow | null = null
@@ -105,6 +106,15 @@ function recentAnyCombos(history: Entry[], scenarioId: string): string[] {
   return [...new Set(arr)].slice(0, RECENT_MEMORY)
 }
 
+// Global (all-scenario) overuse check. recentCombos/recentAnyCombos above are
+// each scoped to ONE scenario's own recency window, so an operator that keeps
+// recurring ACROSS different scenarios (e.g. picked for cliff_drop, ramp_glide
+// and runway_takeoff independently) never trips either window. This looks at
+// the page's actual pick frequency instead, regardless of scenario.
+function overusedAircraft(history: Entry[]): string[] {
+  return overusedOperators(history).map((r) => r.label)
+}
+
 // Settings/environments that have done well for one scenario — fed only when the
 // user opts in via "Vary using coverage", to push the engine to a fresh setting.
 function recentEnvs(history: Entry[], scenarioId: string): string[] {
@@ -180,7 +190,8 @@ function registerIpc(): void {
     emitLog('info', `Playbook attached: ${playbook.length} chars · history: ${history.length} entries`)
 
     const avoidCombos = req.aircraft !== 'placeholder' ? recentCombos(history, req.resolved.id) : []
-    const avoidRecent = req.aircraft !== 'placeholder' ? recentAnyCombos(history, req.resolved.id) : []
+    const avoidOverused = req.aircraft !== 'placeholder' ? overusedAircraft(history) : []
+    const avoidRecent = req.aircraft !== 'placeholder' ? [...new Set([...recentAnyCombos(history, req.resolved.id), ...avoidOverused])] : []
     // cliff_drop always picks its own structure regardless of the env lever's
     // value (the lever's grass/tarmac/coastal options don't apply to it), so
     // treat it as always-auto for coverage purposes.
@@ -189,6 +200,7 @@ function registerIpc(): void {
     const trendsData = req.useTrends ? getTrends() : { text: '', updatedAt: '' }
     const trends = trendsData.text
     if (avoidCombos.length) emitLog('info', `Steering clear of ${avoidCombos.length} aircraft that already did well for ${req.resolved.label}.`)
+    if (avoidOverused.length) emitLog('info', `Also avoiding ${avoidOverused.length} operator(s) overused across the whole page recently (not just this scenario): ${avoidOverused.join(', ')}.`)
     if (avoidRecent.length) emitLog('info', `Steering clear of ${avoidRecent.length} aircraft used in the last few clips for ${req.resolved.label}.`)
     if (avoidEnvs.length) emitLog('info', `Varying away from ${avoidEnvs.length} recent setting(s) for ${req.resolved.label}.`)
     if (avoidLines.length) emitLog('info', `Steering the announcer away from ${avoidLines.length} line(s) already used.`)
@@ -245,7 +257,8 @@ function registerIpc(): void {
     const base = { cliPath: cfg.cliPath, model: cfg.generationModel, timeoutMs: Math.max(cfg.timeoutMs, 240000), onLog: claudeLog }
     emitLog('step', `Generating ${n} candidates in one call — ${req.resolved.label}`)
     const avoidCombos = req.aircraft !== 'placeholder' ? recentCombos(history, req.resolved.id) : []
-    const avoidRecent = req.aircraft !== 'placeholder' ? recentAnyCombos(history, req.resolved.id) : []
+    const avoidOverused = req.aircraft !== 'placeholder' ? overusedAircraft(history) : []
+    const avoidRecent = req.aircraft !== 'placeholder' ? [...new Set([...recentAnyCombos(history, req.resolved.id), ...avoidOverused])] : []
     // cliff_drop always picks its own structure regardless of the env lever's
     // value (the lever's grass/tarmac/coastal options don't apply to it), so
     // treat it as always-auto for coverage purposes.
@@ -331,7 +344,7 @@ function registerIpc(): void {
     const before = getPlaybook()
     emitLog('step', `Learning from a "${entry.reach}" result on ${entry.scenario}…`)
     const system = LEARN_SYSTEM.replace('{BUDGET}', String(cfg.playbookBudget))
-    let next = await callClaude(buildLearnMessage(before, entry, cfg.playbookBudget), {
+    let next = await callClaude(buildLearnMessage(before, entry, cfg.playbookBudget, getHistory()), {
       cliPath: cfg.cliPath, model: cfg.learningModel, timeoutMs: cfg.timeoutMs, system, label: 'learn', onLog: claudeLog,
     })
     // Safety net: if the model overshoots the budget, trim at a line/section

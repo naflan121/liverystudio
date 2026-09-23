@@ -1,6 +1,7 @@
 import type { GenerateRequest, Entry } from './types'
 import { ENV, REACH } from './domain'
 import { fmtViews } from './util'
+import { winRateStats, comboWinRates, operatorFrequency, DEFAULT_WIN_RATE_DIMS } from './brain'
 
 export const SYSTEM = `You write image-to-video prompts for Seedance 2.0. The footage is RC scale-model aircraft, filmed so it looks like genuine full-size real-world aviation video — the "is this real?" illusion. The ultimate goal is REACH on short-form social video; photorealism is your main tool for that. You may sometimes be explicitly asked to add one photoreal-but-impossible "hook" detail — when given that instruction, follow it; otherwise keep everything anatomically real.
 
@@ -341,7 +342,30 @@ export function titleMsg(text: string, avoid: string[]): string {
 // scratch. Clears drift/forgetting that accumulates from one-at-a-time merges. To
 // bound tokens, the full prompt text is included only for winners (Good/Viral) —
 // the ones worth emulating; the rest contribute their levers + comment + flags.
+// Computed evidence handed to the model AHEAD of the raw per-entry list, so it
+// reasons from real percentages instead of having to spot patterns itself by
+// eyeballing dozens of lines — the eyeball read is a likely source of the
+// page's aircraft/operator bias in the first place.
+function statisticalEvidenceBlock(entries: Entry[]): string {
+  const dims = winRateStats(entries, DEFAULT_WIN_RATE_DIMS)
+  const dimLines = dims.map((d) => `${d.title}: ` + d.rows.map((r) => `${r.label} ${r.wins}/${r.total} (${r.pct}%)`).join(', '))
+
+  const combos = comboWinRates(entries, (e) => e.scenario, (e) => e.camera || 'auto').slice(0, 8)
+  const comboLines = combos.map((c) => `${c.a} × camera:${c.b} → ${c.wins}/${c.total} (${c.pct}%)`)
+
+  const overused = operatorFrequency(entries, { sampleSize: entries.length }).filter((r) => r.count >= 4 && r.pct >= 20).slice(0, 5)
+  const overusedLines = overused.map((o) => `${o.label}: ${o.count} of ${o.total} picks (${o.pct}%)`)
+
+  const sections = [
+    dimLines.length && `Win rates by lever (trust these numbers over your own read of the raw list below):\n${dimLines.join('\n')}`,
+    comboLines.length && `Scenario x camera combos:\n${comboLines.join('\n')}`,
+    overusedLines.length && `Overused aircraft/operator picks (actively steer future guidance away from these unless the evidence strongly favors them):\n${overusedLines.join('\n')}`,
+  ].filter(Boolean)
+  return sections.join('\n\n')
+}
+
 export function buildRedistillMessage(entries: Entry[], budget: number): string {
+  const evidence = statisticalEvidenceBlock(entries)
   const lines = entries.map((e, i) => {
     const reach = REACH.find((r) => r.id === e.reach)?.label || 'unknown'
     const flags = e.tags && e.tags.length ? e.tags.join(', ') : 'none'
@@ -355,18 +379,27 @@ export function buildRedistillMessage(entries: Entry[], budget: number): string 
   }).join('\n\n')
   return [
     `Rebuild the ENTIRE playbook FROM SCRATCH from ALL the scored results below — do NOT start from any existing playbook. Look for patterns that REPEAT across results, weight by evidence strength and reach tier, and fold them into one fresh, compact playbook. A single uncommented flop teaches nothing on its own; a signal seen across several results is real.`,
+    evidence ? `STATISTICAL EVIDENCE (computed directly from this data, not inferred — use it to check your own reading of the results below, especially before writing any "avoid this aircraft/operator/lever" rule):\n${evidence}` : '',
     `ALL SCORED RESULTS (${entries.length}, newest first):\n${lines}`,
     `Output only the rebuilt playbook in markdown, under ${budget} characters, following every rule above.`,
-  ].join('\n\n')
+  ].filter(Boolean).join('\n\n')
 }
 
-export function buildLearnMessage(playbook: string, entry: Entry, budget: number): string {
+export function buildLearnMessage(playbook: string, entry: Entry, budget: number, recentHistory: Entry[] = []): string {
   const reachLabel = REACH.find((r) => r.id === entry.reach)?.label || 'unknown'
   const flags = entry.tags && entry.tags.length ? entry.tags.join(', ') : 'none'
   const comment = entry.comment && entry.comment.trim() ? `"${entry.comment.trim()}"` : 'none'
+  // Global (all-scenario) frequency signal for this entry's own pick — lets the
+  // learner see when a pick is part of a page-wide bias pattern even though
+  // this one result, in isolation, looks like an ordinary win or flop.
+  let freqNote = ''
+  if (entry.pickedAircraft && entry.pickedAircraft.trim() && recentHistory.length) {
+    const freq = operatorFrequency(recentHistory, { sampleSize: recentHistory.length }).find((r) => r.label === entry.pickedAircraft!.trim())
+    if (freq && freq.count >= 4) freqNote = `\n- This pick's recent frequency: ${freq.count} of the last ${freq.total} aircraft picks page-wide (${freq.pct}%)${freq.pct >= 25 ? ' — an outsized share; weigh this before crediting the pick itself for the result' : ''}`
+  }
   return [
     `CURRENT PLAYBOOK:\n${playbook && playbook.trim() ? playbook.trim() : '(empty — start a new one)'}`,
-    `NEW RESULT:\n- Reach: ${reachLabel}\n- Scenario: ${entry.scenario}\n- Aircraft pick: ${entry.aircraft}${entry.pickedAircraft ? ` (${entry.pickedAircraft})` : ''}${(entry.region === 'tier1' || (!entry.region && entry.tier1Only)) ? ' (Tier-1 countries restriction was ON — the airline choice was constrained)' : entry.region === 'europe' ? ' (Europe-only restriction was ON — the airline choice was constrained)' : ''}\n- Crowd: ${entry.crowd}\n- Environment: ${entry.env}\n- Camera: ${entry.camera || 'auto'}\n- Hook mode: ${entry.hook ? 'yes' : 'no'}\n- Multi-shot: ${entry.multiShot ? 'yes' : 'no'}\n- Punchy open: ${entry.punchyOpen ? 'yes' : 'no'}${entry.boost ? '\n- Reach Boost: ON (ceiling-attempt biases from the performance analysis were applied)' : ''}${entry.longPrompt ? `\n- Long-prompt mode: ON (${LONG_PROMPT_CHARS}-char budget instead of the usual limit)` : ''}${typeof entry.views === 'number' ? `\n- Approximate all-time views: ${fmtViews(entry.views)}` : ''}${entry.remixOf ? '\n- Remixed from a previous Good/Viral winner (deliberately reused its winning ingredients)' : ''}${entry.nudge && entry.nudge.trim() ? `\n- User's one-off direction for this clip (overrode the levers): "${entry.nudge.trim()}"` : ''}\n- Illusion-break flags: ${flags}\n- Creator comment: ${comment}`,
+    `NEW RESULT:\n- Reach: ${reachLabel}\n- Scenario: ${entry.scenario}\n- Aircraft pick: ${entry.aircraft}${entry.pickedAircraft ? ` (${entry.pickedAircraft})` : ''}${(entry.region === 'tier1' || (!entry.region && entry.tier1Only)) ? ' (Tier-1 countries restriction was ON — the airline choice was constrained)' : entry.region === 'europe' ? ' (Europe-only restriction was ON — the airline choice was constrained)' : ''}\n- Crowd: ${entry.crowd}\n- Environment: ${entry.env}\n- Camera: ${entry.camera || 'auto'}\n- Hook mode: ${entry.hook ? 'yes' : 'no'}\n- Multi-shot: ${entry.multiShot ? 'yes' : 'no'}\n- Punchy open: ${entry.punchyOpen ? 'yes' : 'no'}${entry.boost ? '\n- Reach Boost: ON (ceiling-attempt biases from the performance analysis were applied)' : ''}${entry.longPrompt ? `\n- Long-prompt mode: ON (${LONG_PROMPT_CHARS}-char budget instead of the usual limit)` : ''}${typeof entry.views === 'number' ? `\n- Approximate all-time views: ${fmtViews(entry.views)}` : ''}${entry.remixOf ? '\n- Remixed from a previous Good/Viral winner (deliberately reused its winning ingredients)' : ''}${entry.nudge && entry.nudge.trim() ? `\n- User's one-off direction for this clip (overrode the levers): "${entry.nudge.trim()}"` : ''}\n- Illusion-break flags: ${flags}\n- Creator comment: ${comment}${freqNote}`,
     `The exact prompt that produced it:\n${entry.text}`,
     `Diagnose the REAL reason from the comment and flags, attach the lesson to that root cause as a transferable craft rule, and do NOT blame the environment / scenario / aircraft unless the evidence points there. If there is no comment and no flag, do not invent a cause. Rewrite the whole playbook now. Markdown only, under ${budget} characters.`,
   ].join('\n\n')
