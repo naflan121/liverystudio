@@ -15,7 +15,7 @@ let win: BrowserWindow | null = null
 
 // Mechanical airliner-ID extraction is a trivial classification — always run it on
 // a fast/cheap model regardless of the (stronger) learning model used for distilling.
-const FAST_MODEL = 'claude-haiku-4-5-20251001'
+const FAST_MODEL = 'claude-haiku-4-5'
 
 /** Push a structured line to the renderer's activity log. */
 function emitLog(level: LogLevel, msg: string): void {

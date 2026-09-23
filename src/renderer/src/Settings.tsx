@@ -9,11 +9,13 @@ const LOG_COLORS: Record<LogLevel, string> = { info: '#9c968a', step: '#f2a55e',
 function logTime(ts: number): string { const d = new Date(ts); const p = (n: number) => String(n).padStart(2, '0'); return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}` }
 
 const MODELS = [
+  { id: 'claude-haiku-4-5', label: 'Haiku 4.5 (fastest / cheapest)' },
   { id: 'claude-sonnet-5', label: 'Sonnet 5 (balanced — recommended)' },
   { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6 (previous gen)' },
-  { id: 'claude-opus-4-8', label: 'Opus 4.8 (highest quality)' },
-  { id: 'claude-fable-5', label: 'Fable 5 (most capable — premium cost)' },
-  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5 (fastest / cheapest)' },
+  { id: 'claude-opus-5', label: 'Opus 5 (highest quality)' },
+  { id: 'claude-opus-4-8', label: 'Opus 4.8 (previous gen)' },
+  { id: 'claude-fable-5-1', label: 'Fable 5.1 (most capable — premium cost)' },
+  { id: 'claude-fable-5', label: 'Fable 5 (previous gen, premium)' },
 ]
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
