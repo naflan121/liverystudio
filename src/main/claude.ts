@@ -1,7 +1,8 @@
 import { spawn, execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, writeFileSync, unlinkSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import crypto from 'node:crypto'
 
 export interface ClaudeOptions {
   cliPath?: string
@@ -81,9 +82,17 @@ export function callClaude(userContent: string, opts: ClaudeOptions): Promise<st
       return
     }
 
+    // Both the user prompt and the (playbook-inflated, scenario-block-inflated)
+    // system prompt can run to tens of thousands of characters. Passing them as
+    // argv strings hits Windows' ~32K CreateProcess command-line ceiling and
+    // spawn fails with ENAMETOOLONG — so the user prompt goes over stdin and the
+    // system prompt goes through a temp file instead of argv.
+    const sysFile = path.join(os.tmpdir(), `livery-lab-system-${crypto.randomUUID()}.txt`)
+    writeFileSync(sysFile, opts.system, 'utf8')
+
     const args = [
-      '-p', userContent,
-      '--system-prompt', opts.system,
+      '-p',
+      '--system-prompt-file', sysFile,
       '--model', opts.model,
       '--output-format', 'json',
     ]
@@ -95,13 +104,17 @@ export function callClaude(userContent: string, opts: ClaudeOptions): Promise<st
     log('info', `${tag}Launching CLI · model ${opts.model} · prompt ${userContent.length} chars`)
     const started = Date.now()
 
+    const cleanup = () => { try { unlinkSync(sysFile) } catch { /* best effort */ } }
+
     // Run from a neutral temp dir so the CLI does not auto-discover any
     // project CLAUDE.md and inject unrelated context.
     const child = spawn(bin, args, {
       cwd: os.tmpdir(),
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     })
+    child.stdin.on('error', () => { /* e.g. EPIPE if the CLI exits before reading stdin */ })
+    child.stdin.end(userContent, 'utf8')
 
     let out = ''
     let err = ''
@@ -118,9 +131,10 @@ export function callClaude(userContent: string, opts: ClaudeOptions): Promise<st
       out += d.toString()
     })
     child.stderr.on('data', (d) => (err += d.toString()))
-    child.on('error', (e) => { clearTimeout(timer); log('err', `${tag}${(e as Error).message}`); reject(e) })
+    child.on('error', (e) => { clearTimeout(timer); cleanup(); log('err', `${tag}${(e as Error).message}`); reject(e) })
     child.on('close', (code) => {
       clearTimeout(timer)
+      cleanup()
       const secs = ((Date.now() - started) / 1000).toFixed(1)
       if (code !== 0 && !out.trim()) {
         log('err', `${tag}CLI exited with code ${code} after ${secs}s.`)

@@ -117,17 +117,22 @@ export function parseVariants(raw: string): string[] {
   return valid.length ? valid : [raw.trim()]
 }
 
-export function buildUserMessage(req: GenerateRequest, playbook: string, extraNegatives: string, avoidAircraft: string[] = [], avoidEnvs: string[] = [], trends = '', avoidLines: string[] = []): string {
+export function buildUserMessage(req: GenerateRequest, playbook: string, extraNegatives: string, avoidAircraft: string[] = [], avoidEnvs: string[] = [], trends = '', avoidLines: string[] = [], avoidRecent: string[] = []): string {
   const { resolved, aircraft, crowd, env, camera, hook, multiShot, punchyOpen, explore, nudge } = req
   const parts: string[] = []
 
   // ramp_glide carries its own complete scene (lakeside festival, drone camera,
   // festival crowd) — the crowd/env/camera levers would only contradict it.
   const sceneLocked = resolved.id === 'ramp_glide'
+  // cliff_drop shares ramp_glide's camera/crowd/boost handling (its own drone
+  // geometry, its own two-group crowd, its own reach bias) but — unlike
+  // ramp_glide — its environment (the launch structure) genuinely varies, so
+  // it gets its own flag rather than folding into sceneLocked.
+  const cliffDrop = resolved.id === 'cliff_drop'
 
   let sc = `Scenario: ${resolved.brief || 'Choose a strong scenario yourself.'}`
   // distant_reveal hides the scale — a crowd in frame would defeat the point.
-  if (!['boneyard', 'assembly', 'distant_reveal', 'ramp_glide'].includes(resolved.id)) {
+  if (!['boneyard', 'assembly', 'distant_reveal', 'ramp_glide', 'cliff_drop'].includes(resolved.id)) {
     sc += ' ' + (crowd === 'solo'
       ? 'Keep it a quiet solo session, a few people at most.'
       : crowd === 'packed'
@@ -135,6 +140,15 @@ export function buildUserMessage(req: GenerateRequest, playbook: string, extraNe
       : crowd === 'auto'
       ? 'Choose the crowd size that best fits this scenario and gives the strongest reach — anywhere from a quiet field to a packed airshow; remember crowds tend to lift reach.'
       : 'Populate it with a busy flightline crowd, people in frame throughout.')
+  }
+  if (cliffDrop) {
+    sc += ' ' + (crowd === 'solo'
+      ? 'CROWD (sparse): four people carrying it plus one on a transmitter/radio up at the launch point; four to six people and one vehicle in the receiving group below.'
+      : crowd === 'packed'
+      ? 'CROWD (event): four people carrying it plus one on radio plus six to eight more watching and filming up at the launch point; twenty-plus people spread along the landing area below, three to four vehicles, a marquee.'
+      : crowd === 'auto'
+      ? 'CROWD: choose the crowd size that best fits this structure and gives the strongest reach, from a sparse launch party and receiving group up to a full event crowd — but never a flightline; this is a two-group scene (a launch party up top, a separate receiving group below), never one continuous crowd.'
+      : 'CROWD (standard): four people carrying it plus one on radio plus two more watching up at the launch point; eight to twelve people and two vehicles in the receiving group below.')
   }
   parts.push(sc)
 
@@ -163,6 +177,24 @@ export function buildUserMessage(req: GenerateRequest, playbook: string, extraNe
 7) AIRCRAFT for this format: recognisable or delightfully ODD airframes shine here — oversized cargo whales (a Beluga, Super Guppy, Dreamlifter), jumbo widebodies, or a beloved retro livery. Follow the aircraft instruction above; wherever it leaves the choice to you, lean surprising.
 CHARACTER BUDGET OVERRIDE: for THIS scenario only, the usual under-1500-character limit is lifted — write up to ${req.longPrompt ? LONG_PROMPT_CHARS : resolved.charBudget} characters, and use the room for the full scene staging and the complete geometry-matched Negative list. Do not compress the Negatives to save space.`)
 
+  // Distilled from Scenario/CliffDrop_Scenario_Pack.md — a release-from-height
+  // dead-stick glide, the same "one locked geometry, hard-won constants" shape
+  // as ramp_glide above, but the camera stays off to the falling aircraft's
+  // flank (never chasing from behind) and the environment is a chosen
+  // structure rather than a fixed scene, so it keeps its own block.
+  if (cliffDrop) parts.push(`CLIFFDROP CRAFT RULES (each constant below fixed one specific observed failure — emit their sense in full, never paraphrase them away):
+STRUCTURE OF THE CLIP: 1) LAUNCH (0-3s) — drone descending past the launch point, level with the aircraft, square to its left side, four people holding it, livery clearly readable. 2) RELEASE + FALL (3-7s) — a straight push along the nose's existing heading, nose-low drop, the structure face ripping upward past the background as the speed reference. 3) GLIDE (7-14s) — nose lifts into a flat glide, drone tracks alongside in a straight line, ground detail and people always visible behind the aircraft. 4) PAYOFF (14-18s) — contact with the landing surface, a visible plume/spray/scatter, a straight slide, settles upright and intact, people running in. Target duration 15-20 seconds.
+FRAMING: the whole airframe sits inside frame nose to tail and wingtip to wingtip from the very first second and stays fully in frame the entire way — never cropped, never clipped at the edges.
+DIRECTION LOCK — the single most failure-prone rule, four generations failed here: the nose points toward the RIGHT edge of frame in the very first frame and keeps pointing right in every frame until the last. It travels right for the entire clip and never travels left, never toward the camera, never away from the camera, never reverses, never flips, never yaws. Clean left-side profile throughout.
+CAMERA LOCK: the drone flies formation off the aircraft's left flank, level with it and square to its side, at the same height at all times. Never above it, never below it, never behind it, never ahead of it, never looking down at it. Horizon level across the middle of frame, never at the top. Camera always moving in smooth straight lines — first descending, then tracking right — never stationary, never hovering, never drifting or correcting in place.
+CAMERA GEOMETRY — pick exactly ONE and hold it the whole clip: (A) SIDE TRACK (default, proven): drone descends past the launch point level with the aircraft, then tracks right alongside it in a straight line. (B) STATIC-TO-TRACK: drone holds a wide side-on framing at launch height as the aircraft falls through frame, then picks it up and tracks — use only for very tall structures where the fall itself is the story; riskier, the reacquisition can fail. (C) DESCENDING FLANK: drone descends slightly faster than the aircraft during the fall so it rises in frame, then equalises for the glide — adds drama to short drops; the camera must never end up above it. Never permitted: chase-from-behind (that is the Ramp-glide geometry, not this one), overhead, ground-level start, hovering, reverse angle, angle change mid-clip.
+SCALE / REFERENCE-IMAGE RULE: the aircraft is exactly the one in the attached reference image — match its shape, proportions, livery, colours and every marking precisely, identical in every frame. It is a three-metre foam-and-plastic scale model, light enough that four people carry it between them, one under each wing and two at the forward fuselage. Its physical scale stays constant the entire clip. Engines silent and unpowered throughout. Never describe livery, markings or colours in prose — the reference image carries the aircraft and text describing it will contradict the image; text carries only physical size, carry-party size and unpowered state.
+LAUNCH GEOMETRY: they lift it over the rail and push it out — a straight push toward the right of frame, along the direction the nose is already pointing, never sideways off the parapet (a perpendicular push gives the model no committed heading and it flips or reverses on screen).
+AIRCRAFT for this format: reach for a recognisable widebody in a painted livery (747/A380/777/787/A330/A350/MD-11/767) for the strongest reach, a recognisable narrowbody (737/A320/A321/E190/ATR72/Dash8) for a change of pace, or — for a hook — an oddball (BelugaXL, Super Guppy, Dreamlifter, An-124, An-225, Concorde, Spruce Goose, Caproni Ca.60, V-173 Flying Pancake, Bartini VVA-14, An-2) or a civil-marked warbird (Spitfire, P-51, DC-3, a firefighting/civil-scheme C-130). Always pair a real operator of that type; where an operator-region restriction is active below, prefer that operator's home geography for the structure too. NEVER use a bare polished aluminium livery (renders as liquid chrome) — painted liveries only. Never a modern combat jet, visible weapons, or any head-of-state aircraft (reads as an incident involving a leader). If a type name gets refused, drop the type name from the prompt and let the reference image carry it instead — never reword to evade the filter, a clip that needed evasion is a takedown risk on a monetised page.
+AUDIO — radio only: all spoken audio comes through handheld radios — compressed, squelchy, thin and band-limited, with mic clicks and static bursts between transmissions, no unfiltered speech anywhere in the clip. Open on radio traffic already mid-sentence from below, a click, a reply from the launch point, grunts of effort as it leaves their hands, plus fitting ambience. Through the fall and glide: only thin radio chatter half-swallowed by squelch, wind rush over the mic, the faint whistle of the unpowered airframe — no engine sound, ever. On payoff: the impact sound, then the radio bursts into overlapping transmissions all at once, whooping and laughter compressed through the squelch, one last transmission closer to the mic. No music.
+CHARACTER BUDGET OVERRIDE: for THIS scenario only, write up to ${req.longPrompt ? LONG_PROMPT_CHARS : resolved.charBudget} characters and use the room for the full structure staging and the complete geometry-matched Negative list — do not compress the Negatives to save space.
+NEGATIVE SECTION must ALSO include: aircraft moving backwards, aircraft travelling left, reversing direction, direction change, heading change, flipping around, 180-degree flip, yawing, nose swinging across frame, nose toward camera, tail toward camera, head-on angle, rear angle, three-quarter angle, flying away from camera, flying toward camera, thrown sideways off the parapet, launch perpendicular to the nose, camera above the aircraft, high angle, overhead view, bird's-eye view, looking down on the aircraft, downward camera tilt, horizon at top of frame, camera below the aircraft, camera behind it, camera ahead of it, camera changing sides, ground-level camera, camera starting on the ground, hovering camera, stationary camera, camera holding position, camera drifting in place, floaty camera motion, camera pausing mid-clip, aircraft hovering, aircraft floating, weightless motion, gliding unnaturally smoothly, motion on rails, aircraft rolling, banking, wing dropping, rotating about its long axis, belly toward camera, aircraft cropped at the edge of frame, wingtips cut off, tail cut off, nose cut off, aircraft framed against open sky, empty background behind the aircraft, no ground reference, aircraft alone in frame, no people in shot, full-size aircraft, real airliner proportions, aircraft growing in size, model changing size, differing from the reference image, changed livery, changed markings, changed proportions, morphing airframe, livery changing mid-clip, cut, cuts, hard cut, jump cut, edit, camera teleporting, angle change mid-clip, scene change, static opening frame, frozen first frame, posed shot, double shadow, two shadows, second aircraft, jet engine roar, engines running, engine exhaust, powered flight, climbing away, gaining altitude, turning in flight, curving flight path, loop, stall, nosedive, cartwheeling crash, breaking apart, debris, wings snapping, explosion, fire, smoke, people struck by the aircraft, cloned faces, duplicated spectators, evenly spaced crowd, watermark, on-screen text, subtitles, CGI glow, cartoon, slow motion, speed ramp, freeze frame, timelapse, overcast sky, rain, fog, night, golden hour, sunset, unfiltered speech, clean voices, direct dialogue, shouting picked up by the camera, scripted dialogue during flight, garbled speech. Then append two or three terms matching whichever aircraft class you picked, e.g. 747 → no hump, flat forward fuselage, missing upper deck, wrong engine count; A380 → single-deck fuselage, no upper deck windows, narrowbody proportions; twin widebody (777/787/A330/A350) → four engines, engines on the tail, hump, double-deck fuselage; narrowbody → widebody proportions, twin-aisle fuselage, four engines; oddball (Beluga/Guppy/Ca.60) → conventional airliner shape, generic airliner fuselage; warbird → jet engines, modern airliner shape, tricycle undercarriage.`)
+
   // Announcer lines the page has already used — fed back so each airline gets
   // its own call instead of the model drifting to one favourite line.
   if (resolved.id === 'ramp_glide' && avoidLines.length) {
@@ -189,26 +221,36 @@ CHARACTER BUDGET OVERRIDE: for THIS scenario only, the usual under-1500-characte
     parts.push(`These aircraft have ALREADY done well for this exact scenario — to broaden coverage, pick a DIFFERENT one and do NOT repeat any of these (a different airline, type, or model all count as different):\n${avoidAircraft.map((a) => '- ' + a).join('\n')}`)
   }
 
+  // Short-term "just used" signal — independent of score, so back-to-back runs
+  // don't quietly converge on the same pick before it has even been scored.
+  if (aircraft !== 'placeholder' && avoidRecent.length) {
+    parts.push(`These aircraft/airline combos were used in the last few clips for this exact scenario (regardless of how they scored, or if they haven't been scored yet) — pick something clearly DIFFERENT this time, do NOT repeat any of these:\n${avoidRecent.map((a) => '- ' + a).join('\n')}`)
+  }
+
   // Operator-region restriction: hard constraint that overrides the "range
   // widely across the world's airlines" guidance in the aircraft line above.
   // 'tier1' is the original lever; 'europe' is its European counterpart.
   const region = req.region || (req.tier1Only ? 'tier1' : 'any')
   if (region === 'tier1' && aircraft !== 'placeholder') {
-    parts.push(`TIER-1 COUNTRY RESTRICTION (hard constraint): the aircraft's airline or operator MUST be based in one of these Tier-1 countries — ${TIER1_COUNTRIES}. This OVERRIDES any "range widely across the world's airlines" guidance above: still vary and avoid recent repeats, but ONLY within these countries. For a commercial airliner pick a real flag carrier or major airline from one of these nations (e.g. American Airlines, Delta, United, Southwest, JetBlue, Alaska Airlines, Air Canada, WestJet, British Airways, Virgin Atlantic, Qantas, Jetstar, Air New Zealand); for a military or vintage aircraft use one operated by one of these countries' armed forces. Do NOT pick an airline or operator from outside this list — in particular no European carriers (e.g. Lufthansa, Air France, KLM), and no Asian or Gulf carriers (e.g. ANA, Japan Airlines, Emirates, Qatar, Singapore Airlines).`)
+    parts.push(`TIER-1 COUNTRY RESTRICTION (hard constraint): the aircraft's airline or operator MUST be based in one of these Tier-1 countries — ${TIER1_COUNTRIES}. This OVERRIDES any "range widely across the world's airlines" guidance above: still vary and avoid recent repeats, but ONLY within these countries. For a commercial airliner pick a real flag carrier or major airline from one of these nations — the US, Canada, the UK and Australia each have several majors to choose from (American, Delta, United, Southwest, JetBlue, Alaska Airlines, Air Canada, WestJet, British Airways, Virgin Atlantic, Qantas, Jetstar, among others), while New Zealand effectively has only one (Air New Zealand). Because that makes New Zealand the single most "different-looking" answer within this list, actively guard against defaulting to it: it should come up only occasionally, not as your go-to whenever you want a fresh-feeling pick — spend most of your picks across the four larger markets and their many carriers instead. For a military or vintage aircraft use one operated by one of these countries' armed forces. Do NOT pick an airline or operator from outside this list — in particular no European carriers (e.g. Lufthansa, Air France, KLM), and no Asian or Gulf carriers (e.g. ANA, Japan Airlines, Emirates, Qatar, Singapore Airlines).`)
   } else if (region === 'europe' && aircraft !== 'placeholder') {
     parts.push(`EUROPE-ONLY RESTRICTION (hard constraint): the aircraft's airline or operator MUST be based in a European country (the UK counts as Europe here). This OVERRIDES any "range widely across the world's airlines" guidance above: still vary and avoid recent repeats, but ONLY within Europe. For a commercial airliner pick a real European carrier (e.g. ${EUROPE_EXAMPLES}); for a military or vintage aircraft use one operated by a European air force. Do NOT pick an operator from outside Europe — no US, Canadian, Asian, Gulf, or Oceanian carriers.`)
   }
 
   const envObj = ENV.find((e) => e.id === env)
   if (sceneLocked) { /* scene, surface and camera are fixed by the scenario block above */ }
+  else if (cliffDrop) {
+    parts.push(`STRUCTURE (the environment): YOU choose a tall launch structure with a drop under it — tall enough the ground is out of frame at the start, textured enough (joints, staining, panel lines, brick courses) to give the fall a speed reference, with a safety rail the crew work over, a landing surface that visibly displaces on contact (spray, dust, gravel, crop, salt), and 8-15 people plus 2-3 vehicles below as scale anchors. Reach for a structure not used recently before repeating one — options include a road or motorway bridge over water or a wooded gorge, a dam wall, a chalk sea cliff, a quarry face, a cooling tower rim, a grain silo, a water tower, a stone viaduct, a dock gantry crane, a wind-turbine nacelle, a stadium roof lip, a hangar roof ridge, a shipyard gantry, a radio mast platform, a desert highway flyover stub, a multi-storey car park top deck over a flooded lower lot, a ski-lift pylon over a snowfield, a lighthouse gallery over tidal sand, an open-cast mine haul-road bench, a castle curtain wall over a moat, a railway trestle over a riverbed, a container stack over a dock apron, a reservoir intake tower, or a sand-quarry conveyor gantry. Never frame the aircraft against open sky — people or ground detail must be visible behind it in every frame of the glide; this is the single biggest cause of scale drift to full-size.`)
+    if (avoidEnvs.length) parts.push(`Recent CliffDrop clips used these structures — to broaden coverage, choose a DIFFERENT one and do not repeat: ${avoidEnvs.join('; ')}.`)
+  }
   else if (env === 'auto') parts.push(`Environment: YOU choose the setting — this is genuinely your decision, so reason it out rather than defaulting by habit. Weigh every option — grass / farmland field, paved tarmac club strip, coastal or lakeside, arid desert or dry-lakebed, alpine mountain meadow — and pick whichever best fits THIS scenario and will reach furthest, keeping it varied from one clip to the next. Do NOT reflexively fall back to a grass field just because RC models usually fly from grass; choose grass only if it genuinely suits this scenario best. Let what the playbook has learned guide the call.`)
   else if (envObj && envObj.desc) parts.push(`Environment: set it at ${envObj.desc}`)
-  if (!sceneLocked && env === 'auto' && avoidEnvs.length) parts.push(`Recent Good/Viral clips for this scenario used these settings — to broaden coverage, choose a DIFFERENT environment and do not repeat: ${avoidEnvs.join('; ')}.`)
-  if (!sceneLocked && env !== 'tarmac' && env !== 'auto') parts.push('Surface: there is no paved runway here — taxi, takeoff roll and landing all happen on the natural unpaved ground of THIS setting (grass, sand, dirt or cracked lakebed as fits — not necessarily grass); treat any runway wording as this unpaved strip, and show the airframe bumping, pitching and bobbling over the uneven ground while its wheels are down.')
+  if (!sceneLocked && !cliffDrop && env === 'auto' && avoidEnvs.length) parts.push(`Recent Good/Viral clips for this scenario used these settings — to broaden coverage, choose a DIFFERENT environment and do not repeat: ${avoidEnvs.join('; ')}.`)
+  if (!sceneLocked && !cliffDrop && env !== 'tarmac' && env !== 'auto') parts.push('Surface: there is no paved runway here — taxi, takeoff roll and landing all happen on the natural unpaved ground of THIS setting (grass, sand, dirt or cracked lakebed as fits — not necessarily grass); treat any runway wording as this unpaved strip, and show the airframe bumping, pitching and bobbling over the uneven ground while its wheels are down.')
 
   // Camera identity — who is holding the camera. Casual eyewitness footage is a
   // strong "is this real?" cue on Reels/Shorts; keep ONE identity per clip.
-  if (!sceneLocked) parts.push(camera === 'phone'
+  if (!sceneLocked && !cliffDrop) parts.push(camera === 'phone'
     ? 'CAMERA IDENTITY: the whole clip is bystander smartphone footage — handheld at eye level from the crowd line, natural micro-shake and breathing in the frame, slightly imperfect framing with a small drift and re-centre as it tracks the model, a touch of digital-zoom softness on the longest moments. It must read as genuine eyewitness phone video someone just posted, never a polished production. Keep this one identity for the entire clip.'
     : camera === 'longlens'
     ? 'CAMERA IDENTITY: the whole clip is planespotter super-telephoto footage from a distance — heavy lens compression flattening the scene, a smooth tripod pan tracking the model, slight focus breathing and heat-haze shimmer between lens and subject. It must read like avgeek spotter footage. Keep this one identity for the entire clip.'
@@ -224,15 +266,22 @@ CHARACTER BUDGET OVERRIDE: for THIS scenario only, the usual under-1500-characte
   // Skip the boost block for ramp_glide: its runway/tarmac/rotation biases would
   // only fight the locked lakeside scene, and the scenario block already carries
   // its own aircraft bias (widebody / oddball cargo). A/B tracking is unaffected.
-  if (req.boost && !sceneLocked) {
+  if (req.boost && !sceneLocked && !cliffDrop) {
     parts.push(`REACH BOOST (ceiling attempt): this clip is a deliberate attempt at breakout reach. A study of this page's all-time results shows what carries the highest ceiling, so bias every choice the levers above leave OPEN toward: a recognisable commercial airliner in a real major-airline livery (over military or warbird); a widebody or large narrowbody — A380/747/757/A320 class — over small sport types; a paved tarmac runway over grass; a takeoff-rotation or touchdown payoff over taxiing; and a composition built on the runway centerline (the model tracking straight along the line, growing or shrinking in frame) or on the rotation moment caught low from the side, nose up, gear still extended. These are biases, not overrides: the scenario, any operator-region restriction, the avoid lists and the user direction all still win where they conflict.`)
+  }
+  if (req.boost && cliffDrop) {
+    parts.push(`REACH BOOST (ceiling attempt): bias every choice the rules above leave OPEN toward the highest-ceiling combination for THIS format — a recognisable widebody in a real major-airline livery, a structure that fills the background densely (not a slender or spindly one), and bright, hard midday light over any softer or golden-hour look. These are biases, not overrides: the locked geometry, negatives, and any operator-region restriction still win where they conflict.`)
   }
 
   parts.push(hook
-    ? "HOOK MODE ON: introduce exactly ONE plausible-but-impossible structural feature for a 'wait, what is that?' double-take — e.g. two airliner airframes blended (an A380 nose on a 747 body), a stretched extra fuselage section, or an extra engine. It must look fully photoreal and physically built, NOT a CGI glitch, blur, or cartoon. Keep everything else realistic and all audio/Negative rules intact. Make the oddity subtle enough that viewers argue over whether it is real."
+    ? (cliffDrop
+      ? "HOOK MODE ON: the one impossible detail must be the AIRFRAME CHOICE itself — reach for a delightfully odd or rarely-seen airframe (a Spruce Goose, Caproni Ca.60, Bartini VVA-14, V-173 Flying Pancake, or similar) that makes a viewer do a double-take, NOT a physics anomaly. Keep the fall, glide and landing fully physically real throughout — a fabricated physics oddity breaks this format's illusion. Every other rule stays intact."
+      : "HOOK MODE ON: introduce exactly ONE plausible-but-impossible structural feature for a 'wait, what is that?' double-take — e.g. two airliner airframes blended (an A380 nose on a 747 body), a stretched extra fuselage section, or an extra engine. It must look fully photoreal and physically built, NOT a CGI glitch, blur, or cartoon. Keep everything else realistic and all audio/Negative rules intact. Make the oddity subtle enough that viewers argue over whether it is real.")
     : 'Keep the aircraft anatomically correct and fully real. No impossible features.')
 
-  parts.push(multiShot
+  parts.push(cliffDrop
+    ? 'SHOTS: one single unbroken take is MANDATORY for this scenario — never cut, never change angle, one continuous camera move from launch to payoff. This is load-bearing: prior generations that broke this rule failed outright, regardless of the multi-shot setting.'
+    : multiShot
     ? 'SHOTS: multiple shots and angle changes are allowed for this one.'
     : 'SHOTS: one single continuous unbroken shot only — no cuts, no angle changes, a single flowing camera move.')
 

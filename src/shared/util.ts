@@ -8,8 +8,11 @@ export function cleanTitle(t: string, maxLen = 90): string {
   return s
 }
 
-export function toFilename(t: string): string {
-  let s = (t || 'clip').replace(/[\\/:*?"<>|]/g, '').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_')
+/** prefix: optional scenario filename prefix (e.g. "CliffDrop") stamped in front, unless the text already starts with it. */
+export function toFilename(t: string, prefix?: string): string {
+  let base = t || 'clip'
+  if (prefix && prefix.trim() && !base.toLowerCase().startsWith(prefix.trim().toLowerCase())) base = `${prefix.trim()}_${base}`
+  let s = base.replace(/[\\/:*?"<>|]/g, '').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_')
   if (s.length > 60) s = s.slice(0, 60)
   s = s.replace(/_+$/, '')
   return (s || 'clip') + '.mp4'

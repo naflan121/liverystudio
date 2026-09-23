@@ -76,6 +76,12 @@ export const SCENARIOS: Scenario[] = [
   // craft rules that make it generate cleanly (flip-proof geometry, announcer
   // audio, extended Negative list) live in a dedicated block in prompts.ts.
   { id: 'ramp_glide', label: 'Ramp glide & splash (lakeside festival)', group: 'Water', weight: 3, charBudget: 3800, brief: 'The viral "ramp glide & splash" format: vertical drone footage, one single continuous unbroken take at natural real-time speed, at a bright lakeside summer festival — a tall wooden launch tower rising from the shore of a calm green lake, a curved plywood ramp at its top, colorful abstract banners with no readable text draped down its side, dense crowds behind barriers on the grassy bank, white and yellow event tents. The aircraft is a lightweight two-meter foam-and-plastic RC scale model, engines silent and unpowered, its physical scale constant for the entire clip, perched on the ramp lip with crew hands steadying its wingtips. The hands shove it off and it settles into a long, impossibly steady dead-stick glide a few meters above the water — wings level, tiny wobbles, sinking imperceptibly, never climbing, never turning — until in the final seconds its belly kisses the lake and ploughs a huge white spray plume, skiing in a widening V-shaped wake before slowing and settling afloat as the clip ends.' },
+  // Distilled from the CliffDrop scenario pack (Scenario/CliffDrop_Scenario_Pack.md):
+  // a foam-and-plastic scale airliner is released unpowered from a tall
+  // structure, falls, recovers into a flat dead-stick glide, and puts down on
+  // a surface with a visible payoff. The locked camera/framing/negative rules
+  // that make it generate cleanly live in a dedicated block in prompts.ts.
+  { id: 'cliff_drop', label: 'CliffDrop (height release & dead-stick glide)', group: 'Drop', weight: 1, charBudget: 4800, filenamePrefix: 'CliffDrop', brief: 'A group of people release a large foam-and-plastic scale airliner, unpowered, from a tall structure. It falls, recovers into a flat dead-stick glide a few metres above the ground, runs out across the landscape, and puts down on a surface that gives a visible payoff — spray, dust, gravel, crop or salt. One drone films the whole thing in a single unbroken take from the aircraft\'s flank. The tension: it has no engines and it is very high up, and it lands intact.' },
   { id: 'water_takeoff', label: 'Water takeoff (seaplane)', group: 'Water', brief: 'A floatplane water takeoff: taxi cutting a V-wake, spray off the hull, lift-off with droplets trailing the floats.' },
   { id: 'water_landing', label: 'Water landing (seaplane)', group: 'Water', brief: 'A floatplane water landing: shallow approach, floats contacting with weight, fan of spray, planing taxi.' },
   { id: 'belly_landing', label: 'Gear-up belly landing (incident)', group: 'Incident', brief: 'A gear-up belly landing: low approach, fuselage skidding with a scrape and dust, emergency crews near.' },
@@ -98,7 +104,7 @@ export function pickRandomScenario(): Scenario {
 }
 
 export function groupScenarios(): [string, Scenario[]][] {
-  const order = ['', 'Flight', 'Water', 'Incident', 'Ground']
+  const order = ['', 'Flight', 'Water', 'Drop', 'Incident', 'Ground']
   const map: Record<string, Scenario[]> = {}
   SCENARIOS.forEach((s) => { (map[s.group] = map[s.group] || []).push(s) })
   return order.filter((g) => map[g]).map((g) => [g, map[g]] as [string, Scenario[]])

@@ -18,6 +18,8 @@ export interface Scenario {
   weight?: number
   /** Per-scenario character budget for the generated prompt. Overrides config.charLimit — some formats (e.g. ramp_glide) need a longer, geometry-matched Negative list than 1500 chars allows. */
   charBudget?: number
+  /** Optional filename prefix (e.g. "CliffDrop") stamped onto every generated filename for this scenario, so clips sort/identify by scenario regardless of the AI-written title. */
+  filenamePrefix?: string
 }
 
 export interface Entry {

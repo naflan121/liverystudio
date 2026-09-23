@@ -91,6 +91,20 @@ function recentCombos(history: Entry[], scenarioId: string): string[] {
   return [...new Set(arr)].slice(0, COMBO_MEMORY)
 }
 
+// Airline+model combos used for this scenario in the last few generations,
+// regardless of score — a short-term "you just used this" signal so back-to-back
+// runs don't converge on the same pick before it's even been scored. Distinct from
+// recentCombos above (which only tracks combos that scored well, by design, so an
+// unscored or flopped repeat stays retryable there).
+const RECENT_MEMORY = 5
+function recentAnyCombos(history: Entry[], scenarioId: string): string[] {
+  const arr = history
+    .filter((h) => h.scenarioId === scenarioId && h.aircraft !== 'placeholder' && !h.excludeCoverage
+      && h.pickedAircraft && h.pickedAircraft.trim())
+    .map((h) => h.pickedAircraft!.trim())
+  return [...new Set(arr)].slice(0, RECENT_MEMORY)
+}
+
 // Settings/environments that have done well for one scenario — fed only when the
 // user opts in via "Vary using coverage", to push the engine to a fresh setting.
 function recentEnvs(history: Entry[], scenarioId: string): string[] {
@@ -166,11 +180,16 @@ function registerIpc(): void {
     emitLog('info', `Playbook attached: ${playbook.length} chars · history: ${history.length} entries`)
 
     const avoidCombos = req.aircraft !== 'placeholder' ? recentCombos(history, req.resolved.id) : []
-    const avoidEnvs = req.varyCoverage && req.env === 'auto' ? recentEnvs(history, req.resolved.id) : []
+    const avoidRecent = req.aircraft !== 'placeholder' ? recentAnyCombos(history, req.resolved.id) : []
+    // cliff_drop always picks its own structure regardless of the env lever's
+    // value (the lever's grass/tarmac/coastal options don't apply to it), so
+    // treat it as always-auto for coverage purposes.
+    const avoidEnvs = req.varyCoverage && (req.env === 'auto' || req.resolved.id === 'cliff_drop') ? recentEnvs(history, req.resolved.id) : []
     const avoidLines = req.resolved.id === 'ramp_glide' ? recentAnnouncerLines(history) : []
     const trendsData = req.useTrends ? getTrends() : { text: '', updatedAt: '' }
     const trends = trendsData.text
     if (avoidCombos.length) emitLog('info', `Steering clear of ${avoidCombos.length} aircraft that already did well for ${req.resolved.label}.`)
+    if (avoidRecent.length) emitLog('info', `Steering clear of ${avoidRecent.length} aircraft used in the last few clips for ${req.resolved.label}.`)
     if (avoidEnvs.length) emitLog('info', `Varying away from ${avoidEnvs.length} recent setting(s) for ${req.resolved.label}.`)
     if (avoidLines.length) emitLog('info', `Steering the announcer away from ${avoidLines.length} line(s) already used.`)
     if (req.useTrends) {
@@ -188,7 +207,7 @@ function registerIpc(): void {
     const charLimit = req.longPrompt ? LONG_PROMPT_CHARS : (req.resolved.charBudget || cfg.charLimit)
     const rewriteTarget = req.longPrompt ? LONG_PROMPT_CHARS : (req.resolved.charBudget || cfg.targetMax)
 
-    let text = await callClaude(buildUserMessage(req, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends, avoidLines), { ...base, system: SYSTEM, label: 'prompt' })
+    let text = await callClaude(buildUserMessage(req, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends, avoidLines, avoidRecent), { ...base, system: SYSTEM, label: 'prompt' })
     if (text.length > charLimit) {
       emitLog('warn', `Over limit (${text.length} > ${charLimit}) — asking for a tighter rewrite`)
       text = await callClaude(
@@ -210,7 +229,7 @@ function registerIpc(): void {
       } catch { emitLog('warn', 'Title step failed — continuing without one.') }
     }
 
-    const filename = toFilename(title || req.resolved.label)
+    const filename = toFilename(title || req.resolved.label, req.resolved.filenamePrefix)
     emitLog('ok', 'Prompt ready — added to the queue.')
     return { text, title, filename }
   }))
@@ -226,10 +245,14 @@ function registerIpc(): void {
     const base = { cliPath: cfg.cliPath, model: cfg.generationModel, timeoutMs: Math.max(cfg.timeoutMs, 240000), onLog: claudeLog }
     emitLog('step', `Generating ${n} candidates in one call — ${req.resolved.label}`)
     const avoidCombos = req.aircraft !== 'placeholder' ? recentCombos(history, req.resolved.id) : []
-    const avoidEnvs = req.varyCoverage && req.env === 'auto' ? recentEnvs(history, req.resolved.id) : []
+    const avoidRecent = req.aircraft !== 'placeholder' ? recentAnyCombos(history, req.resolved.id) : []
+    // cliff_drop always picks its own structure regardless of the env lever's
+    // value (the lever's grass/tarmac/coastal options don't apply to it), so
+    // treat it as always-auto for coverage purposes.
+    const avoidEnvs = req.varyCoverage && (req.env === 'auto' || req.resolved.id === 'cliff_drop') ? recentEnvs(history, req.resolved.id) : []
     const avoidLines = req.resolved.id === 'ramp_glide' ? recentAnnouncerLines(history) : []
     const trends = req.useTrends ? getTrends().text : ''
-    const raw = await callClaude(buildUserMessage({ ...req, candidates: n }, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends, avoidLines), { ...base, system: SYSTEM, label: 'candidates' })
+    const raw = await callClaude(buildUserMessage({ ...req, candidates: n }, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends, avoidLines, avoidRecent), { ...base, system: SYSTEM, label: 'candidates' })
     const batchLimit = req.longPrompt ? LONG_PROMPT_CHARS : (req.resolved.charBudget || cfg.charLimit)
     const variants = parseVariants(raw).slice(0, n)
     for (const v of variants) {
@@ -237,7 +260,7 @@ function registerIpc(): void {
     }
     emitLog('ok', `${variants.length} candidate prompt(s) ready — pick one.`)
     // Titles are written only for the chosen candidate (renderer side).
-    return variants.map((text) => ({ text, title: '', filename: toFilename(req.resolved.label) }))
+    return variants.map((text) => ({ text, title: '', filename: toFilename(req.resolved.label, req.resolved.filenamePrefix) }))
   }))
 
   // Social caption + hashtags for a finished prompt — on demand from the UI.

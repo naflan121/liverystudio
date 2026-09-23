@@ -217,6 +217,14 @@ export function App() {
     setError(''); setLoading(true); setPickedTags([]); setComment(''); setReachDraft(null); setExcludeCoverage(false); setViewsDraft(''); setCandidates([])
   }
 
+  // Clears whatever is currently open — a fresh generation or one pulled up
+  // from History — including the scoring draft and the nudge openEntry copies
+  // in, so a stale "Direction" from a history entry can't silently ride along
+  // into the next generation.
+  function startNew() {
+    setError(''); setCurrent(null); setCandidates([]); setPickedTags([]); setComment(''); setReachDraft(null); setExcludeCoverage(false); setViewsDraft(''); setNudge('')
+  }
+
   async function generate() {
     if (loading) return
     resetScoringDraft()
@@ -261,7 +269,7 @@ export function App() {
     if (config?.titleEnabled && !entry.title) {
       try {
         const t = await window.api.title({ text: entry.text, avoid: titleAvoidList() })
-        const withTitle: Entry = { ...entry, title: t, filename: toFilename(t || entry.scenario) }
+        const withTitle: Entry = { ...entry, title: t, filename: toFilename(t || entry.scenario, SCENARIOS.find((s) => s.id === entry.scenarioId)?.filenamePrefix) }
         setCurrent((c) => (c && c.id === entry.id ? withTitle : c))
         persist((prev) => prev.map((h) => (h.id === entry.id ? withTitle : h)))
       } catch { /* keep it untitled — "New title" can retry */ }
@@ -333,7 +341,7 @@ export function App() {
     if (!current) return
     try {
       const t = await window.api.title({ text: current.text, avoid: titleAvoidList(current.title) })
-      patchCurrent({ title: t, filename: toFilename(t || current.scenario) })
+      patchCurrent({ title: t, filename: toFilename(t || current.scenario, SCENARIOS.find((s) => s.id === current.scenarioId)?.filenamePrefix) })
     } catch { /* ignore */ }
   }
 
@@ -391,6 +399,7 @@ export function App() {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             {learning && <span style={{ color: ACCENT, fontSize: 12.5, fontWeight: 600 }}>teaching playbook…{learnCount > 1 ? ` (${learnCount})` : ''}</span>}
+            {(current || candidates.length > 0) && <button onClick={startNew} title="Clear the open prompt (and any leftover Direction from History) so you can generate a fresh one" style={{ ...ghostBtn, padding: '8px 14px' }}>New</button>}
             <button onClick={() => setView('history')} style={{ ...ghostBtn, padding: '8px 14px' }}>History</button>
             <button onClick={() => setView('settings')} style={{ ...ghostBtn, padding: '8px 14px' }}>Settings</button>
           </div>
