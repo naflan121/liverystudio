@@ -8,14 +8,15 @@ import {
   getPlaybookVersions, appendLearningLog, getLearningLog, resetMemory, dataDir, setDataDir,
   getTrends, setTrends, getSavedConcepts, setSavedConcepts, importFromLiveryLab, liveryLabDataDir, pullNewFromLab, initStorage, backupStorage, getRenderLessons, setRenderLessons,
 } from './store'
-import { closeDb, reviewStatsByScenario, rejectReasonCounts } from './db'
+import { closeDb, reviewStatsByScenario, rejectReasonCounts, getEntry as getEntryById } from './db'
 import { initReview, decide as reviewDecide, undo as reviewUndo, rewriteAndRender, rerender, markUnusable } from './review'
 import { renderLessonsBlock } from '../shared/review'
-import { initRenderQueue, overview as renderOverview, submit as renderSubmit, cancel as renderCancel, retry as renderRetry, remove as renderRemove, listJobs } from './render'
+import { buildReferenceBlock, fillImage1 } from '../shared/references'
+import { initRenderQueue, overview as renderOverview, submit as renderSubmit, cancel as renderCancel, retry as renderRetry, remove as renderRemove, listJobs, updateJob } from './render'
 import { SYSTEM, TITLE_SYSTEM, LEARN_SYSTEM, EXTRACT_SYSTEM, TREND_SYSTEM, CAPTION_SYSTEM, CONCEPT_SYSTEM, LONG_PROMPT_CHARS, buildUserMessage, titleMsg, captionMsg, buildLearnMessage, buildRedistillMessage, buildConceptMessage, extractMsg, parseScene, parseConcept, trendsMsg, parseVariants } from '../shared/prompts'
 import { cleanTitle, toFilename, clampPlaybook } from '../shared/util'
 import { overusedOperators } from '../shared/brain'
-import type { GenerateRequest, Entry, LogLevel, SavedConcept } from '../shared/types'
+import type { GenerateRequest, Entry, LogLevel, SavedConcept, RenderJob } from '../shared/types'
 
 let win: BrowserWindow | null = null
 
@@ -185,6 +186,26 @@ function registerMediaProtocol(): void {
       headers: { 'Content-Type': 'video/mp4', 'Content-Length': String(end - start + 1), 'Content-Range': `bytes ${start}-${end}/${size}`, 'Accept-Ranges': 'bytes' },
     })
   })
+}
+
+// Livery Studio: the "Reference images" block for a render. Image 1 names the exact
+// aircraft the prompt uses (one Haiku call per prompt, reused by every later take);
+// Image 2 is the optional per-scenario line from Settings → Render.
+async function resolveReferenceBlock(job: RenderJob): Promise<string> {
+  const cfg = getConfig().render
+  let aircraft = job.refAircraft ?? listJobs().find((j) => j.entryId === job.entryId && j.refAircraft !== undefined)?.refAircraft
+  if (aircraft === undefined) {
+    emitLog('info', `Naming the aircraft for reference images: "${job.title}"…`)
+    const c = getConfig()
+    const raw = await exclusive(() => callClaude(extractMsg(job.prompt), { cliPath: c.cliPath, model: FAST_MODEL, timeoutMs: c.timeoutMs, system: EXTRACT_SYSTEM, label: 'ref-aircraft', onLog: claudeLog }))
+    aircraft = parseScene(raw).aircraft
+  }
+  updateJob(job.id, { refAircraft: aircraft })
+  const entry = getEntryById(job.entryId)
+  const image2 = (entry && cfg.referenceImage2?.[entry.scenarioId]) || ''
+  const block = buildReferenceBlock([aircraft ? fillImage1(cfg.referenceImage1, aircraft) : '', image2])
+  if (block) emitLog('info', `Reference images: ${aircraft || 'no specific aircraft'}${image2 ? ' + scenario image' : ''}.`)
+  return block
 }
 
 // Livery Studio: rules learned from rejected renders ride along on every new prompt
@@ -490,7 +511,7 @@ function registerIpc(): void {
   }))
   // --- Livery Studio: render pipeline (Dola / Seedance) ---------------------------
   ipcMain.handle('render:overview', () => renderOverview())
-  ipcMain.handle('render:submit', (_e, entryIds: number[]) => entryIds.map((id) => renderSubmit(id)))
+  ipcMain.handle('render:submit', (_e, entryIds: number[], opts?: { references?: boolean }) => entryIds.map((id) => renderSubmit(id, opts || {})))
   ipcMain.handle('render:cancel', (_e, jobId: string) => { renderCancel(jobId); return true })
   ipcMain.handle('render:retry', (_e, payload: { jobId: string; fresh: boolean }) => { renderRetry(payload.jobId, payload.fresh); return true })
   ipcMain.handle('render:remove', (_e, jobId: string) => { renderRemove(jobId); return true })
@@ -563,7 +584,7 @@ if (!gotLock) {
     registerMediaProtocol()
     registerIpc()
     createWindow()
-    initRenderQueue(emitLog, (jobs) => { if (win && !win.isDestroyed()) win.webContents.send('render:changed', jobs) })
+    initRenderQueue(emitLog, (jobs) => { if (win && !win.isDestroyed()) win.webContents.send('render:changed', jobs) }, resolveReferenceBlock)
     initReview({
       emitLog,
       claude: (message, o) => exclusive(() => {

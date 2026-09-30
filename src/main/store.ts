@@ -7,6 +7,7 @@ import {
   loadRenderJobs, syncRenderJobs,
 } from './db'
 import { REVIEW_DEFAULTS } from '../shared/review'
+import { REFERENCE_IMAGE1_DEFAULT } from '../shared/references'
 
 // Per-device bootstrap pointer (always in this machine's userData). It records
 // WHERE the actual data lives, so each Windows device can independently point at
@@ -22,6 +23,9 @@ export const DEFAULT_RENDER: RenderSettings = {
   duration: '15 Sec',
   aspect: '9:16 vertical',
   extraInstructions: '',
+  referenceImages: true,
+  referenceImage1: REFERENCE_IMAGE1_DEFAULT,
+  referenceImage2: {},
   waitMinutes: 25,
   autoStartInstances: true,
   autoRender: false,

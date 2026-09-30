@@ -5,6 +5,7 @@ import { trendMasterPrompt } from '@shared/prompts'
 import { winRateStats, comboWinRates, operatorFrequency, DEFAULT_WIN_RATE_DIMS } from '@shared/brain'
 import type { AppConfig, CliTestResult, Entry, LogLine, LogLevel, SavedConcept } from '@shared/types'
 import { REVIEW_DEFAULTS } from '@shared/review'
+import { buildReferenceBlock, fillImage1, REFERENCE_IMAGE1_DEFAULT } from '@shared/references'
 
 const LOG_COLORS: Record<LogLevel, string> = { info: '#9c968a', step: '#f2a55e', ok: '#7fc59c', warn: '#e2b53c', err: '#ff8a6b' }
 function logTime(ts: number): string { const d = new Date(ts); const p = (n: number) => String(n).padStart(2, '0'); return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}` }
@@ -501,9 +502,30 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
             <Field label="Additional instructions (optional — sent after the settings lines, before the prompt)">
               <textarea value={c.render.extraInstructions || ''} onChange={(e) => setRender({ extraInstructions: e.target.value })} rows={4} placeholder="e.g. Keep the aircraft's orientation constant for the whole clip." style={{ width: '100%', padding: '10px 12px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 13, boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit', color: INK }} />
             </Field>
+            <div style={{ display: 'grid', gap: 10, border: `1px solid ${LINE}`, borderRadius: 10, padding: '12px 14px', background: '#faf9f6' }}>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', fontSize: 13.5 }}>
+                <input type="checkbox" checked={c.render.referenceImages} onChange={(e) => setRender({ referenceImages: e.target.checked })} style={{ width: 16, height: 16, accentColor: ACCENT, marginTop: 2 }} />
+                <span>Instruct Dola to find reference images <span style={{ color: MUTE }}>— default for every render; each Render button has its own checkbox to switch it off once. Naming the aircraft costs one tiny Haiku call per prompt (re-renders reuse it). Skipped automatically when the prompt names no specific aircraft and the scenario has no Image 2.</span></span>
+              </label>
+              <Field label="Image 1 ({aircraft} = the aircraft the prompt names, e.g. Delta Air Lines Boeing 757-200)">
+                <input value={c.render.referenceImage1} onChange={(e) => setRender({ referenceImage1: e.target.value })} placeholder={REFERENCE_IMAGE1_DEFAULT} style={{ ...sel, boxSizing: 'border-box', fontSize: 13 }} />
+              </Field>
+              <details>
+                <summary style={{ cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Image 2 per scenario (optional) · {Object.values(c.render.referenceImage2 || {}).filter((v) => v.trim()).length} set</summary>
+                <div style={{ fontSize: 12, color: MUTE, margin: '8px 0' }}>A second reference for scenarios that need a prop or setting, e.g. "a small green RC farm tractor with big rear tyres and a rear hitch". Leave blank for none.</div>
+                <div style={{ display: 'grid', gap: 6, maxHeight: 320, overflowY: 'auto', paddingRight: 4 }}>
+                  {[...groupScenarios().flatMap(([, items]) => items).filter((s) => s.id !== 'random'), ...savedConcepts.map((sc) => ({ id: `concept:${sc.id}`, label: `${sc.label} (saved concept)` }))].map((s) => (
+                    <div key={s.id} style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 220px) minmax(0,1fr)', gap: 8, alignItems: 'center' }}>
+                      <span style={{ fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={s.label}>{s.label}</span>
+                      <input value={c.render.referenceImage2?.[s.id] || ''} onChange={(e) => setRender({ referenceImage2: { ...(c.render.referenceImage2 || {}), [s.id]: e.target.value } })} placeholder="none" style={{ ...sel, boxSizing: 'border-box', fontSize: 12.5, padding: '6px 9px' }} />
+                    </div>
+                  ))}
+                </div>
+              </details>
+            </div>
             <Field label="What Dola receives">
               <pre style={{ margin: 0, fontSize: 11.5, color: MUTE, fontFamily: 'ui-monospace, monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: '#faf9f6', border: `1px solid ${LINE}`, borderRadius: 9, padding: '9px 11px', lineHeight: 1.55 }}>
-                {[c.render.model, c.render.duration, c.render.aspect, 'NotifyHuman Artifacts', 'Dont ask me any more confirmation go ahead', '', ...(c.render.extraInstructions?.trim() ? [c.render.extraInstructions.trim(), ''] : []), '[prompt]'].join('\n')}
+                {[c.render.model, c.render.duration, c.render.aspect, 'NotifyHuman Artifacts', 'Dont ask me any more confirmation go ahead', '', ...(c.render.extraInstructions?.trim() ? [c.render.extraInstructions.trim(), ''] : []), ...(c.render.referenceImages ? [buildReferenceBlock([fillImage1(c.render.referenceImage1, 'Delta Air Lines Boeing 757-200'), '[scenario Image 2, if set]']), ''] : []), '[prompt]'].join('\n')}
               </pre>
             </Field>
             <Field label="Video folder">

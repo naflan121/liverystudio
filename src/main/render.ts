@@ -23,6 +23,8 @@ type OnChange = (jobs: RenderJob[]) => void
 
 let emitLog: Emit = () => { /* set by initRenderQueue */ }
 let onChange: OnChange = () => { /* set by initRenderQueue */ }
+/** Builds the reference-images block for a job (may call Claude once per prompt). Set by initRenderQueue. */
+let resolveReferences: (job: RenderJob) => Promise<string> = async () => ''
 
 let jobs: RenderJob[] = []
 const activeInstances = new Set<number>()
@@ -47,9 +49,10 @@ export function sentToday(): number {
   return jobs.filter((j) => j.sentAt && localDay(new Date(j.sentAt)) === today && j.status !== 'cancelled').length
 }
 
-export function initRenderQueue(log: Emit, change: OnChange): void {
+export function initRenderQueue(log: Emit, change: OnChange, refs?: (job: RenderJob) => Promise<string>): void {
   emitLog = log
   onChange = change
+  if (refs) resolveReferences = refs
   jobs = getRenderJobs()
   // Anything mid-flight when the app last closed: resume waiting if it was already
   // sent (chatUrl known), otherwise put it back in the queue from scratch.
@@ -94,7 +97,7 @@ export function updateJob(jobId: string, p: Partial<RenderJob>): RenderJob | und
 }
 
 /** Queue a render for a history entry. Re-submitting an entry that already has a live job returns that job. */
-export function submit(entryId: number, opts: { auto?: RenderJob['auto'] } = {}): RenderJob {
+export function submit(entryId: number, opts: { auto?: RenderJob['auto']; references?: boolean } = {}): RenderJob {
   const live = jobs.find((j) => j.entryId === entryId && !TERMINAL.has(j.status))
   if (live) return live
   const entry = getEntry(entryId)
@@ -104,6 +107,7 @@ export function submit(entryId: number, opts: { auto?: RenderJob['auto'] } = {})
     entryId, prompt: entry.text, title: entry.title || entry.scenario, filename: entry.filename || 'clip.mp4',
     status: 'queued', attempts: 0, tried: [], createdAt: new Date().toISOString(),
     ...(opts.auto ? { auto: opts.auto } : {}),
+    ...(typeof opts.references === 'boolean' ? { useReferences: opts.references } : {}),
   }
   jobs.unshift(job)
   save()
@@ -211,8 +215,12 @@ async function runJob(job: RenderJob, inst: { id: number; name: string; isInitia
       patch(job, { status: 'sending' })
       emitLog('step', `Sending "${job.title}" to Dola on ${inst.name}…`)
       // Captured at send time (not queue time), so edits in Settings apply to anything still waiting.
-      patch(job, { instructions: cfg.extraInstructions?.trim() || undefined })
-      await fillVideoPrompt(page, { prompt: job.prompt, model: cfg.model, duration: cfg.duration, aspect: cfg.aspect, instructions: job.instructions })
+      let references = ''
+      if (job.useReferences ?? cfg.referenceImages) {
+        try { references = await resolveReferences(job) } catch (e: any) { emitLog('warn', `Reference images skipped for "${job.title}": ${e?.message || e}`) }
+      }
+      patch(job, { instructions: cfg.extraInstructions?.trim() || undefined, references: references || undefined })
+      await fillVideoPrompt(page, { prompt: job.prompt, model: cfg.model, duration: cfg.duration, aspect: cfg.aspect, instructions: job.instructions, references: job.references })
       const sent = await sendAndHandleBusy(page, cancelled)
       patch(job, { chatUrl: sent.url })
       if (sent.status === 'still_busy') {
@@ -240,7 +248,7 @@ async function runJob(job: RenderJob, inst: { id: number; name: string; isInitia
     const bytes = await downloadFile(v.url, file)
     fs.writeFileSync(file.replace(/\.mp4$/i, '.json'), JSON.stringify({
       entryId: job.entryId, title: job.title, prompt: job.prompt,
-      model: cfg.model, duration: cfg.duration, aspect: cfg.aspect, instructions: job.instructions,
+      model: cfg.model, duration: cfg.duration, aspect: cfg.aspect, instructions: job.instructions, references: job.references,
       instance: inst.name, chatUrl: job.chatUrl, width: v.width, height: v.height, bytes,
       submitted: job.createdAt, saved: new Date().toISOString(),
     }, null, 2))

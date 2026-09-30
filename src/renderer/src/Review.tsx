@@ -245,6 +245,7 @@ export function Review({ entries, jobs, onOpenEntry, onClose }: {
                     </span>
                   </div>
                   {sel.instructions && <div style={{ fontSize: 12.5 }}><span style={{ color: ACCENT, fontWeight: 600 }}>Additional instructions: </span>{sel.instructions}</div>}
+                  {sel.references && <div style={{ fontSize: 12.5 }}><span style={{ color: ACCENT, fontWeight: 600 }}>Reference images: </span>{sel.references.replace(/^Reference images:\s*/, '')}</div>}
                   {showPrompt && <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'ui-monospace, monospace', fontSize: 11.5, lineHeight: 1.6, background: SCREEN, color: SCREEN_TX, borderRadius: 9, padding: '10px 12px', maxHeight: 320, overflowY: 'auto' }}>{sel.prompt}</pre>}
                 </div>
 

@@ -468,7 +468,7 @@ export function App() {
   }
 
   if (view === 'renders') {
-    return <Renders entries={history} jobs={renderJobs} onOpenEntry={(h) => { openEntry(h); setView('lab') }} onClose={() => setView('lab')}
+    return <Renders refsDefault={config.render?.referenceImages !== false} entries={history} jobs={renderJobs} onOpenEntry={(h) => { openEntry(h); setView('lab') }} onClose={() => setView('lab')}
       onRefresh={async () => { const r = await window.api.refreshHistory(); setHistory(r.history); return r.added }} />
   }
 
@@ -708,7 +708,7 @@ export function App() {
               </div>
             )}
 
-            {!loading && !candidates.length && current && <RenderStrip entry={current} job={latestRender.get(current.id)} />}
+            {!loading && !candidates.length && current && <RenderStrip entry={current} job={latestRender.get(current.id)} refsDefault={config.render?.referenceImages !== false} />}
 
             {!loading && !candidates.length && current && cur && cur.status === 'skipped' ? (
               <div style={{ border: `1px solid ${LINE}`, borderRadius: 12, padding: '14px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', background: PAPER }}>

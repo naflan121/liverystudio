@@ -71,16 +71,30 @@ function JobCard({ job, onOpenEntry, entry }: { job: RenderJob; entry?: Entry; o
   )
 }
 
+/** Per-render "Reference images" switch; starts from Settings → Render. */
+function RefsToggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label title="Ask Dola to search for reference photos of the exact aircraft (and the scenario's Image 2, if set) and use them for this render" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: on ? INK : MUTE, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+      <input type="checkbox" checked={on} onChange={(e) => onChange(e.target.checked)} style={{ accentColor: ACCENT, width: 14, height: 14 }} /> Reference images
+    </label>
+  )
+}
+
 /** Compact render status + actions for the prompt open in the lab. */
-export function RenderStrip({ entry, job }: { entry: Entry; job?: RenderJob }) {
+export function RenderStrip({ entry, job, refsDefault }: { entry: Entry; job?: RenderJob; refsDefault: boolean }) {
   const [watch, setWatch] = useState(false)
+  const [refs, setRefs] = useState(refsDefault)
+  useEffect(() => { setRefs(refsDefault) }, [entry.id, refsDefault])
   const meta = job ? RENDER_META[job.status] : null
   const box = { border: `1px solid ${LINE}`, borderRadius: 12, padding: '12px 16px', background: PAPER, display: 'grid', gap: 8 } as const
   if (!job || job.status === 'cancelled') {
     return (
       <div style={{ ...box, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 13, color: MUTE }}>Not rendered yet.</span>
-        <button onClick={() => window.api.renderSubmit([entry.id])} style={{ ...ghostBtn, color: ACCENT, borderColor: ACCENT }}>🎬 Render on Dola</button>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <RefsToggle on={refs} onChange={setRefs} />
+          <button onClick={() => window.api.renderSubmit([entry.id], { references: refs })} style={{ ...ghostBtn, color: ACCENT, borderColor: ACCENT }}>🎬 Render on Dola</button>
+        </span>
       </div>
     )
   }
@@ -98,7 +112,7 @@ export function RenderStrip({ entry, job }: { entry: Entry; job?: RenderJob }) {
           {meta!.live && <button onClick={() => window.api.renderCancel(job.id)} style={{ ...small, color: MUTE }}>Cancel</button>}
           {job.status === 'failed' && job.chatUrl && <button onClick={() => window.api.renderRetry(job.id, false)} style={small}>Check again</button>}
           {job.status === 'failed' && <button onClick={() => window.api.renderRetry(job.id, true)} title="Send this prompt to Dola again from scratch" style={small}>Re-render</button>}
-          {job.status === 'done' && <button onClick={() => window.api.renderSubmit([entry.id])} title="Render another take of this prompt" style={small}>Another take</button>}
+          {job.status === 'done' && <><RefsToggle on={refs} onChange={setRefs} /><button onClick={() => window.api.renderSubmit([entry.id], { references: refs })} title="Render another take of this prompt" style={small}>Another take</button></>}
         </span>
       </div>
       {job.error && <div style={{ fontSize: 12, color: BAD, wordBreak: 'break-word' }}>{job.error}</div>}
@@ -107,7 +121,8 @@ export function RenderStrip({ entry, job }: { entry: Entry; job?: RenderJob }) {
   )
 }
 
-export function Renders({ entries, jobs, onOpenEntry, onClose, onRefresh }: {
+export function Renders({ entries, jobs, onOpenEntry, onClose, onRefresh, refsDefault }: {
+  refsDefault: boolean
   entries: Entry[]
   jobs: RenderJob[]
   onOpenEntry: (h: Entry) => void
@@ -116,6 +131,7 @@ export function Renders({ entries, jobs, onOpenEntry, onClose, onRefresh }: {
   onRefresh: () => Promise<number>
 }) {
   const [refreshing, setRefreshing] = useState(false)
+  const [refs, setRefs] = useState(refsDefault)
   const [refreshMsg, setRefreshMsg] = useState('')
   async function refresh(): Promise<void> {
     setRefreshing(true); setRefreshMsg('')
@@ -157,7 +173,7 @@ export function Renders({ entries, jobs, onOpenEntry, onClose, onRefresh }: {
 
   async function renderPicked(): Promise<void> {
     if (!picked.length) return
-    await window.api.renderSubmit(picked)
+    await window.api.renderSubmit(picked, { references: refs })
     setPicked([])
   }
 
@@ -227,6 +243,7 @@ export function Renders({ entries, jobs, onOpenEntry, onClose, onRefresh }: {
             {unrendered.length > 0 && (
               <span style={{ display: 'flex', gap: 6 }}>
                 <button onClick={() => setPicked(picked.length === unrendered.length ? [] : unrendered.map((e) => e.id))} style={small}>{picked.length === unrendered.length ? 'Select none' : 'Select all'}</button>
+                <RefsToggle on={refs} onChange={setRefs} />
                 <button onClick={renderPicked} disabled={!picked.length} style={{ ...small, background: picked.length ? ACCENT : '#fff', color: picked.length ? '#fff' : MUTE, borderColor: picked.length ? ACCENT : LINE }}>🎬 Render {picked.length || ''}</button>
               </span>
             )}

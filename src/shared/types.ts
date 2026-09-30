@@ -184,6 +184,12 @@ export interface RenderSettings {
   aspect: string
   /** Standing instructions typed between the settings block and the prompt (blank = none). */
   extraInstructions: string
+  /** Ask Dola to search for reference images itself (block sent after the instructions). Default for every render; each render can override. */
+  referenceImages: boolean
+  /** Image 1 line; {aircraft} is replaced with the aircraft the prompt names. */
+  referenceImage1: string
+  /** Optional Image 2 line per scenario id (incl. 'concept:<id>'), e.g. a prop the concept needs. */
+  referenceImage2: Record<string, string>
   /** How long to wait for Dola to finish one video after it starts. */
   waitMinutes: number
   /** Start a stopped instance when no running one is free. */
@@ -202,6 +208,12 @@ export interface RenderJob {
   prompt: string
   /** Additional instructions sent above the prompt — captured when the job is sent to Dola. */
   instructions?: string
+  /** Per-render override of Settings → Render → reference images (undefined = use the setting). */
+  useReferences?: boolean
+  /** Aircraft named by the prompt, looked up once for Image 1 ('' = none found). Reused by later takes. */
+  refAircraft?: string
+  /** The reference-images block actually sent (captured at send time). */
+  references?: string
   title: string
   filename: string
   status: RenderStatus

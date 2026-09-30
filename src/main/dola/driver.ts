@@ -138,7 +138,7 @@ async function typePrompt(page: Page, prompt: string): Promise<void> {
 }
 
 /** New chat -> Pro -> "Generate Videos" skill -> settings block -> [instructions] -> prompt (not sent). */
-export async function fillVideoPrompt(page: Page, o: { prompt: string; model: string; duration: string; aspect: string; instructions?: string }): Promise<void> {
+export async function fillVideoPrompt(page: Page, o: { prompt: string; model: string; duration: string; aspect: string; instructions?: string; references?: string }): Promise<void> {
   await openNewChat(page)
   await setMode(page, 'Pro')
   await clearEditor(page)
@@ -146,9 +146,9 @@ export async function fillVideoPrompt(page: Page, o: { prompt: string; model: st
   await page.locator(SEL.slashOption).filter({ hasText: VIDEO_SKILL.option }).first().click({ timeout: 10_000 })
   await page.waitForTimeout(300)
   const header = [o.model, o.duration, o.aspect, ...VIDEO_EXTRA].join('\n')
-  // Optional standing instructions (Settings → Render) sit between the settings block and the prompt.
-  const extra = o.instructions?.trim()
-  await typePrompt(page, extra ? `${header}\n\n${extra}\n\n${o.prompt}` : `${header}\n\n${o.prompt}`)
+  // Optional blocks between the settings lines and the prompt: standing instructions, then the reference-images request.
+  const parts = [header, o.instructions?.trim(), o.references?.trim(), o.prompt].filter(Boolean)
+  await typePrompt(page, parts.join('\n\n'))
 }
 
 const lastReplyText = (page: Page): Promise<string | null> => page.evaluate((sel) => {

@@ -38,7 +38,8 @@ const api = {
   // --- Livery Studio: render pipeline ---
   renderOverview: (): Promise<RenderOverview> => ipcRenderer.invoke('render:overview'),
   /** Queue renders for these history entry ids (an entry with a live job just returns it). */
-  renderSubmit: (entryIds: number[]): Promise<RenderJob[]> => ipcRenderer.invoke('render:submit', entryIds),
+  /** opts.references overrides Settings → Render → reference images for these renders. */
+  renderSubmit: (entryIds: number[], opts?: { references?: boolean }): Promise<RenderJob[]> => ipcRenderer.invoke('render:submit', entryIds, opts),
   renderCancel: (jobId: string): Promise<boolean> => ipcRenderer.invoke('render:cancel', jobId),
   /** fresh=false re-checks the job's existing Dola chat; fresh=true renders again from scratch. */
   renderRetry: (jobId: string, fresh: boolean): Promise<boolean> => ipcRenderer.invoke('render:retry', { jobId, fresh }),
