@@ -153,13 +153,14 @@ export function useLab({ config, history, persist, setPlaybook }: {
 
   // Shared by the scenario-select path, the Random pick, and the AI concept
   // path — all three just need a resolved Scenario to run the same request.
-  async function generateFrom(resolved: Scenario) {
+  /** `aircraftOverride` replaces the Aircraft lever for this one generation (recorded on the entry too). */
+  async function generateFrom(resolved: Scenario, aircraftOverride?: string) {
     if (loading) return
     resetScoringDraft()
-    const req = buildReq(resolved)
+    const req = { ...buildReq(resolved), ...(aircraftOverride ? { aircraft: aircraftOverride } : {}) }
     // AI concepts have no static home to look their brief up from later
     // (unlike fixed scenarios, which stay in SCENARIOS by id) — stash it here.
-    const extra: Partial<Entry> = resolved.id.startsWith('concept:') ? { conceptBrief: resolved.brief } : {}
+    const extra: Partial<Entry> = { ...(resolved.id.startsWith('concept:') ? { conceptBrief: resolved.brief } : {}), ...(aircraftOverride ? { aircraft: aircraftOverride } : {}) }
     try {
       if (candidateMode) {
         // ONE CLI call returns all candidates (separated server-side); titles
@@ -372,8 +373,9 @@ export function useLab({ config, history, persist, setPlaybook }: {
       if (!resolved) { update(i, { status: 'failed', error: 'Scenario not found' }); continue }
       update(i, { status: 'writing', scenario: resolved.label })
       try {
-        const req = { ...buildReq(resolved), nudge: o.direction, batchUsed: [...used] }
-        const extra: Partial<Entry> = { nudge: o.direction.trim(), ...(resolved.id.startsWith('concept:') ? { conceptBrief: resolved.brief } : {}) }
+        const pick = idea ? ideaAircraft() : undefined // fresh concepts always name a real aircraft
+        const req = { ...buildReq(resolved), nudge: o.direction, batchUsed: [...used], ...(pick ? { aircraft: pick } : {}) }
+        const extra: Partial<Entry> = { nudge: o.direction.trim(), ...(resolved.id.startsWith('concept:') ? { conceptBrief: resolved.brief } : {}), ...(pick ? { aircraft: pick } : {}) }
         const res = await window.api.generate(req)
         const entry = { ...buildEntry(resolved, res, extra), id: Date.now() }
         persist((prev) => [entry, ...prev])
@@ -398,6 +400,10 @@ export function useLab({ config, history, persist, setPlaybook }: {
 
   function stopLineup() { lineupStop.current = true }
 
+  // Brainstormed concepts always name a real aircraft: the [MODEL NAME] placeholder
+  // lever becomes "Let Claude decide"; a category lever (commercial, military…) is kept.
+  const ideaAircraft = (): string | undefined => (aircraft === 'placeholder' ? 'auto' : undefined)
+
   // Concept brainstorm: ranked ideas from one call on the learning model.
   const [ideas, setIdeas] = useState<BrainstormIdea[]>([])
   const [brainstorming, setBrainstorming] = useState(false)
@@ -410,7 +416,7 @@ export function useLab({ config, history, persist, setPlaybook }: {
     } finally { setBrainstorming(false) }
   }
   async function generateIdea(i: BrainstormIdea) {
-    await generateFrom({ id: `concept:${Date.now()}`, label: i.label, group: 'AI Concepts', brief: ideaBrief(i) })
+    await generateFrom({ id: `concept:${Date.now()}`, label: i.label, group: 'AI Concepts', brief: ideaBrief(i) }, ideaAircraft())
   }
   async function saveIdea(i: BrainstormIdea) {
     const saved = await window.api.saveConcept({ label: i.label, brief: ideaBrief(i) })
