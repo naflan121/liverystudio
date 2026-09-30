@@ -2,6 +2,17 @@
 // Kept out of prompts.ts on purpose: that file is the Livery Lab brain, shared
 // verbatim with the Lab. Renderer-safe — no Node/Electron imports.
 
+import type { ReviewSettings } from './types'
+
+/** Defaults for Settings → Review. Shared so the renderer can fill gaps in an older config. */
+export const REVIEW_DEFAULTS: ReviewSettings = {
+  learnFromRejections: true,
+  useLessons: true,
+  lessonsBudget: 1500,
+  onAllRejected: 'ask',
+  maxAutoRetries: 1,
+}
+
 /** Why a rendered video was rejected. Ids are stored; labels are shown. */
 export const REJECT_REASONS: { id: string; label: string }[] = [
   { id: 'flip', label: 'Plane flipped / changed direction' },

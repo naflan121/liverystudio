@@ -4,6 +4,7 @@ import { AIRCRAFT, CAMERA, CROWD, ENV, groupScenarios } from '@shared/domain'
 import { trendMasterPrompt } from '@shared/prompts'
 import { winRateStats, comboWinRates, operatorFrequency, DEFAULT_WIN_RATE_DIMS } from '@shared/brain'
 import type { AppConfig, CliTestResult, Entry, LogLine, LogLevel, SavedConcept } from '@shared/types'
+import { REVIEW_DEFAULTS } from '@shared/review'
 
 const LOG_COLORS: Record<LogLevel, string> = { info: '#9c968a', step: '#f2a55e', ok: '#7fc59c', warn: '#e2b53c', err: '#ff8a6b' }
 function logTime(ts: number): string { const d = new Date(ts); const p = (n: number) => String(n).padStart(2, '0'); return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}` }
@@ -39,7 +40,9 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
   onPlaybook: (p: string) => void
   onResetMemory: () => void
 }) {
-  const [c, setC] = useState<AppConfig>(config)
+  // Fill any section an older main process didn't send (e.g. the UI hot-reloaded
+  // ahead of a backend restart) so the page renders instead of crashing.
+  const [c, setC] = useState<AppConfig>(() => ({ ...config, review: { ...REVIEW_DEFAULTS, ...(config.review || {}) } }))
   const [pb, setPb] = useState(playbook)
   const [savedAt, setSavedAt] = useState(0)
   const [test, setTest] = useState<CliTestResult | null>(null)

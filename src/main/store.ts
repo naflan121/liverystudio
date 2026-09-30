@@ -6,6 +6,7 @@ import {
   getDb, migrateFromJson, backupDb, loadEntries, getEntry, upsertEntries, countEntries, clearEntries,
   loadRenderJobs, syncRenderJobs,
 } from './db'
+import { REVIEW_DEFAULTS } from '../shared/review'
 
 // Per-device bootstrap pointer (always in this machine's userData). It records
 // WHERE the actual data lives, so each Windows device can independently point at
@@ -26,13 +27,7 @@ export const DEFAULT_RENDER: RenderSettings = {
   autoRender: false,
 }
 
-export const DEFAULT_REVIEW: ReviewSettings = {
-  learnFromRejections: true,
-  useLessons: true,
-  lessonsBudget: 1500,
-  onAllRejected: 'ask',
-  maxAutoRetries: 1,
-}
+export const DEFAULT_REVIEW: ReviewSettings = REVIEW_DEFAULTS // shared so the renderer can fill gaps too
 
 export const DEFAULT_CONFIG: AppConfig = {
   cliPath: '',
