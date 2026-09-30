@@ -220,7 +220,9 @@ async function runJob(job: RenderJob, inst: { id: number; name: string; isInitia
 
     patch(job, { status: 'downloading' })
     const v = await resolveFallbackApi(apis[apis.length - 1])
-    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15)
+    // Local time, so filenames match the clock the user sees (toISOString would be UTC).
+    const d = new Date(), p2 = (n: number): string => String(n).padStart(2, '0')
+    const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}_${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`
     const file = path.join(cfg.outputDir, `${job.filename.replace(/\.mp4$/i, '')}_${stamp}.mp4`)
     const bytes = await downloadFile(v.url, file)
     fs.writeFileSync(file.replace(/\.mp4$/i, '.json'), JSON.stringify({
