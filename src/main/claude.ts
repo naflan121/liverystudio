@@ -87,7 +87,7 @@ export function callClaude(userContent: string, opts: ClaudeOptions): Promise<st
     // argv strings hits Windows' ~32K CreateProcess command-line ceiling and
     // spawn fails with ENAMETOOLONG — so the user prompt goes over stdin and the
     // system prompt goes through a temp file instead of argv.
-    const sysFile = path.join(os.tmpdir(), `livery-lab-system-${crypto.randomUUID()}.txt`)
+    const sysFile = path.join(os.tmpdir(), `livery-studio-system-${crypto.randomUUID()}.txt`)
     writeFileSync(sysFile, opts.system, 'utf8')
 
     const args = [

@@ -1,0 +1,245 @@
+import { useEffect, useMemo, useState } from 'react'
+import { INK, PAPER, LINE, MUTE, ACCENT, GOOD, BAD, WAIT, SCREEN, ghostBtn } from './ui'
+import { snippet } from '@shared/util'
+import type { Entry, RenderJob, RenderOverview, RenderStatus } from '@shared/types'
+
+export const RENDER_META: Record<RenderStatus, { label: string; color: string; live: boolean }> = {
+  queued: { label: 'Queued', color: WAIT, live: true },
+  starting: { label: 'Starting instance', color: ACCENT, live: true },
+  sending: { label: 'Sending to Dola', color: ACCENT, live: true },
+  generating: { label: 'Generating', color: ACCENT, live: true },
+  downloading: { label: 'Downloading', color: ACCENT, live: true },
+  done: { label: 'Rendered', color: GOOD, live: false },
+  failed: { label: 'Failed', color: BAD, live: false },
+  cancelled: { label: 'Cancelled', color: MUTE, live: false },
+}
+
+function since(iso?: string): string {
+  if (!iso) return ''
+  const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000)
+  if (m < 1) return 'just now'
+  if (m < 60) return `${m} min ago`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h} h ago`
+  return `${Math.floor(h / 24)} d ago`
+}
+
+const small = { ...ghostBtn, padding: '5px 11px', fontSize: 12.5 }
+
+/** Latest job per entry (jobs are stored newest-first). */
+export function latestJobByEntry(jobs: RenderJob[]): Map<number, RenderJob> {
+  const m = new Map<number, RenderJob>()
+  for (const j of jobs) if (!m.has(j.entryId)) m.set(j.entryId, j)
+  return m
+}
+
+function JobCard({ job, onOpenEntry, entry }: { job: RenderJob; entry?: Entry; onOpenEntry: (h: Entry) => void }) {
+  const meta = RENDER_META[job.status]
+  const [preview, setPreview] = useState(false)
+  return (
+    <div style={{ border: `1px solid ${LINE}`, borderRadius: 12, background: '#fff', padding: '12px 14px', display: 'grid', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ width: 9, height: 9, borderRadius: '50%', background: meta.color, flexShrink: 0, animation: meta.live && job.status !== 'queued' ? 'll-pulse 1.4s ease-in-out infinite' : undefined }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{job.title}</div>
+          <div style={{ fontSize: 11.5, color: MUTE }}>
+            <span style={{ color: meta.color, fontWeight: 600 }}>{meta.label}</span>
+            {job.instanceName ? ` · ${job.instanceName}` : ''}
+            {job.status === 'done' ? ` · ${since(job.endedAt)}${job.bytes ? ` · ${(job.bytes / 1e6).toFixed(1)} MB` : ''}${job.width ? ` · ${job.width}×${job.height}` : ''}` : ` · queued ${since(job.createdAt)}`}
+          </div>
+        </div>
+        <span style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {entry && <button onClick={() => onOpenEntry(entry)} style={small}>Prompt</button>}
+          {job.status === 'done' && job.file && <>
+            <button onClick={() => setPreview((p) => !p)} style={{ ...small, color: ACCENT, borderColor: ACCENT }}>{preview ? 'Hide' : '▶ Watch'}</button>
+            <button onClick={() => window.api.renderShowFile(job.file!)} style={small}>Show file</button>
+          </>}
+          {meta.live && <button onClick={() => window.api.renderCancel(job.id)} style={{ ...small, color: MUTE }}>Cancel</button>}
+          {job.status === 'failed' && job.chatUrl && <button onClick={() => window.api.renderRetry(job.id, false)} title="Look in the same Dola chat again for the finished video — no re-send" style={small}>Check again</button>}
+          {(job.status === 'failed' || job.status === 'cancelled') && <button onClick={() => window.api.renderRetry(job.id, true)} title="Send the prompt to Dola again from scratch" style={small}>Re-render</button>}
+          {!meta.live && <button onClick={() => window.api.renderRemove(job.id)} title="Remove from this list (the video file stays on disk)" style={{ ...small, color: MUTE }}>✕</button>}
+        </span>
+      </div>
+      {job.note && <div style={{ fontSize: 12, color: MUTE }}>{job.note}</div>}
+      {job.error && <div style={{ fontSize: 12, color: BAD, background: '#F6E4E1', borderRadius: 8, padding: '6px 10px', wordBreak: 'break-word' }}>{job.error}</div>}
+      {preview && job.file && (
+        <video src={`studio-media://${job.id}/video.mp4`} controls autoPlay style={{ width: '100%', maxHeight: 560, borderRadius: 10, background: SCREEN }} />
+      )}
+    </div>
+  )
+}
+
+/** Compact render status + actions for the prompt open in the lab. */
+export function RenderStrip({ entry, job }: { entry: Entry; job?: RenderJob }) {
+  const [watch, setWatch] = useState(false)
+  const meta = job ? RENDER_META[job.status] : null
+  const box = { border: `1px solid ${LINE}`, borderRadius: 12, padding: '12px 16px', background: PAPER, display: 'grid', gap: 8 } as const
+  if (!job || job.status === 'cancelled') {
+    return (
+      <div style={{ ...box, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 13, color: MUTE }}>Not rendered yet.</span>
+        <button onClick={() => window.api.renderSubmit([entry.id])} style={{ ...ghostBtn, color: ACCENT, borderColor: ACCENT }}>🎬 Render on Dola</button>
+      </div>
+    )
+  }
+  return (
+    <div style={box}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ width: 9, height: 9, borderRadius: '50%', background: meta!.color, animation: meta!.live && job.status !== 'queued' ? 'll-pulse 1.4s ease-in-out infinite' : undefined }} />
+        <span style={{ fontSize: 13.5, fontWeight: 600, color: meta!.color }}>{meta!.label}</span>
+        <span style={{ fontSize: 12, color: MUTE, flex: 1, minWidth: 0 }}>{job.instanceName ? `on ${job.instanceName}` : ''}{job.note ? ` · ${job.note}` : ''}</span>
+        <span style={{ display: 'flex', gap: 6 }}>
+          {job.status === 'done' && job.file && <>
+            <button onClick={() => setWatch((w) => !w)} style={{ ...small, color: ACCENT, borderColor: ACCENT }}>{watch ? 'Hide' : '▶ Watch'}</button>
+            <button onClick={() => window.api.renderShowFile(job.file!)} style={small}>Show file</button>
+          </>}
+          {meta!.live && <button onClick={() => window.api.renderCancel(job.id)} style={{ ...small, color: MUTE }}>Cancel</button>}
+          {job.status === 'failed' && job.chatUrl && <button onClick={() => window.api.renderRetry(job.id, false)} style={small}>Check again</button>}
+          {job.status === 'failed' && <button onClick={() => window.api.renderRetry(job.id, true)} title="Send this prompt to Dola again from scratch" style={small}>Re-render</button>}
+          {job.status === 'done' && <button onClick={() => window.api.renderSubmit([entry.id])} title="Render another take of this prompt" style={small}>Another take</button>}
+        </span>
+      </div>
+      {job.error && <div style={{ fontSize: 12, color: BAD, wordBreak: 'break-word' }}>{job.error}</div>}
+      {watch && job.file && <video src={`studio-media://${job.id}/video.mp4`} controls autoPlay style={{ width: '100%', maxHeight: 520, borderRadius: 10, background: SCREEN }} />}
+    </div>
+  )
+}
+
+export function Renders({ entries, jobs, onOpenEntry, onClose }: {
+  entries: Entry[]
+  jobs: RenderJob[]
+  onOpenEntry: (h: Entry) => void
+  onClose: () => void
+}) {
+  const [ov, setOv] = useState<RenderOverview | null>(null)
+  const [picked, setPicked] = useState<number[]>([])
+  const [filter, setFilter] = useState<'active' | 'done' | 'all'>('active')
+  const [showOld, setShowOld] = useState(false)
+
+  // Instances + today's count come from the main process; poll gently while open.
+  useEffect(() => {
+    let alive = true
+    const load = (): void => { window.api.renderOverview().then((o) => { if (alive) setOv(o) }).catch(() => { /* ignore */ }) }
+    load()
+    const t = setInterval(load, 10_000)
+    return () => { alive = false; clearInterval(t) }
+  }, [jobs])
+
+  const byId = useMemo(() => new Map(entries.map((e) => [e.id, e])), [entries])
+  const latest = useMemo(() => latestJobByEntry(jobs), [jobs])
+  // Prompts still awaiting a post that have no live or finished render yet.
+  // Older than two weeks is hidden by default: those were usually rendered by hand in the Lab days.
+  const unrendered = useMemo(() => entries.filter((e) => e.status === 'queued'
+    && (showOld || Date.now() - new Date(e.ts).getTime() < 14 * 86400000)
+    && (() => {
+      const j = latest.get(e.id)
+      return !j || j.status === 'failed' || j.status === 'cancelled'
+    })()), [entries, latest, showOld])
+
+  const shown = jobs.filter((j) => filter === 'all' ? true : filter === 'done' ? j.status === 'done' : RENDER_META[j.status].live || j.status === 'failed')
+  const liveCount = jobs.filter((j) => RENDER_META[j.status].live).length
+
+  async function renderPicked(): Promise<void> {
+    if (!picked.length) return
+    await window.api.renderSubmit(picked)
+    setPicked([])
+  }
+
+  const cap = ov?.dailyCap ?? 0
+  const sent = ov?.sentToday ?? 0
+
+  return (
+    <div style={{ minHeight: '100%', background: PAPER, color: INK, fontFamily: 'ui-sans-serif, system-ui, sans-serif' }}>
+      <style>{'@keyframes ll-pulse{0%,100%{opacity:1}50%{opacity:.35}}'}</style>
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: 18, display: 'grid', gap: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 11, letterSpacing: 2, textTransform: 'uppercase', color: ACCENT, fontWeight: 600 }}>Render · Dola / Seedance</div>
+            <div style={{ fontSize: 22, fontWeight: 600 }}>Video renders</div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => window.api.renderOpenOutput()} style={ghostBtn}>Open video folder</button>
+            <button onClick={onClose} style={ghostBtn}>Back to lab</button>
+          </div>
+        </div>
+
+        {/* Today + instances */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 260px) 1fr', gap: 14 }}>
+          <div style={{ border: `1px solid ${LINE}`, borderRadius: 12, background: '#fff', padding: '14px 16px' }}>
+            <div style={{ fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', color: MUTE, fontWeight: 600 }}>Sent today</div>
+            <div style={{ fontSize: 28, fontWeight: 700, color: sent >= cap && cap > 0 ? BAD : INK }}>{sent}<span style={{ fontSize: 16, color: MUTE, fontWeight: 500 }}> / {cap}</span></div>
+            <div style={{ height: 6, background: '#EEEAE1', borderRadius: 4, overflow: 'hidden', marginTop: 6 }}>
+              <div style={{ width: `${cap ? Math.min(100, (sent / cap) * 100) : 0}%`, height: '100%', background: sent >= cap ? BAD : ACCENT }} />
+            </div>
+            <div style={{ fontSize: 11.5, color: MUTE, marginTop: 6 }}>{liveCount} in progress · daily cap in Settings → Render</div>
+          </div>
+          <div style={{ border: `1px solid ${LINE}`, borderRadius: 12, background: '#fff', padding: '14px 16px' }}>
+            <div style={{ fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', color: MUTE, fontWeight: 600, marginBottom: 8 }}>Dola instances</div>
+            {!ov ? <div style={{ fontSize: 12.5, color: MUTE }}>Checking…</div>
+              : ov.instances === null ? <div style={{ fontSize: 12.5, color: BAD }}>{ov.error}</div>
+                : ov.instances.length === 0 ? <div style={{ fontSize: 12.5, color: MUTE }}>No instances configured in DolaMultiBrowser.</div>
+                  : (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {ov.instances.map((i) => {
+                        const state = i.excluded ? 'reserved' : i.busy ? 'rendering' : i.cooldownUntil ? 'cooling down' : i.isInitialized ? 'ready' : 'stopped'
+                        const color = i.excluded ? MUTE : i.busy ? ACCENT : i.cooldownUntil ? '#B7862A' : i.isInitialized ? GOOD : WAIT
+                        return (
+                          <span key={i.id} title={`#${i.id} · ${i.status}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${LINE}`, borderRadius: 20, padding: '4px 10px', fontSize: 12, opacity: i.excluded ? 0.6 : 1 }}>
+                            <span style={{ width: 7, height: 7, borderRadius: '50%', background: color }} />
+                            <strong style={{ fontWeight: 600 }}>{i.name}</strong><span style={{ color: MUTE }}>{state}</span>
+                          </span>
+                        )
+                      })}
+                    </div>
+                  )}
+          </div>
+        </div>
+
+        {/* Ready to render */}
+        <div style={{ border: `1px solid ${LINE}`, borderRadius: 12, background: '#fff', padding: '14px 16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: unrendered.length ? 10 : 0, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>Prompts ready to render <span style={{ color: MUTE, fontWeight: 500 }}>· {unrendered.length}</span></div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: MUTE, cursor: 'pointer' }}>
+                <input type="checkbox" checked={showOld} onChange={(e) => { setShowOld(e.target.checked); setPicked([]) }} style={{ accentColor: ACCENT }} /> include older than 14 days
+              </label>
+            </div>
+            {unrendered.length > 0 && (
+              <span style={{ display: 'flex', gap: 6 }}>
+                <button onClick={() => setPicked(picked.length === unrendered.length ? [] : unrendered.map((e) => e.id))} style={small}>{picked.length === unrendered.length ? 'Select none' : 'Select all'}</button>
+                <button onClick={renderPicked} disabled={!picked.length} style={{ ...small, background: picked.length ? ACCENT : '#fff', color: picked.length ? '#fff' : MUTE, borderColor: picked.length ? ACCENT : LINE }}>🎬 Render {picked.length || ''}</button>
+              </span>
+            )}
+          </div>
+          {unrendered.length === 0
+            ? <div style={{ fontSize: 12.5, color: MUTE }}>Every awaiting prompt already has a render. Generate more in the lab.</div>
+            : (
+              <div style={{ display: 'grid', gap: 4, maxHeight: 260, overflowY: 'auto' }}>
+                {unrendered.map((e) => (
+                  <label key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px', borderRadius: 8, cursor: 'pointer', background: picked.includes(e.id) ? '#FBEADF' : 'transparent' }}>
+                    <input type="checkbox" checked={picked.includes(e.id)} onChange={() => setPicked((p) => p.includes(e.id) ? p.filter((x) => x !== e.id) : [...p, e.id])} style={{ accentColor: ACCENT, width: 15, height: 15 }} />
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><strong style={{ fontWeight: 600 }}>{e.title || snippet(e.text)}</strong> <span style={{ color: MUTE }}>· {e.scenario}</span></span>
+                    {latest.get(e.id) && <span style={{ fontSize: 11.5, color: BAD }}>last render {RENDER_META[latest.get(e.id)!.status].label.toLowerCase()}</span>}
+                  </label>
+                ))}
+              </div>
+            )}
+        </div>
+
+        {/* Jobs */}
+        <div style={{ display: 'grid', gap: 10 }}>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {(['active', 'done', 'all'] as const).map((f) => (
+              <button key={f} onClick={() => setFilter(f)} style={{ ...small, background: filter === f ? INK : '#fff', color: filter === f ? '#fff' : INK, borderColor: filter === f ? INK : LINE }}>
+                {f === 'active' ? 'In progress & failed' : f === 'done' ? 'Rendered' : 'All'}
+              </button>
+            ))}
+          </div>
+          {shown.length === 0
+            ? <div style={{ border: `1px dashed ${LINE}`, borderRadius: 12, padding: '28px 20px', textAlign: 'center', color: MUTE, fontSize: 13 }}>Nothing here yet.</div>
+            : shown.map((j) => <JobCard key={j.id} job={j} entry={byId.get(j.entryId)} onOpenEntry={onOpenEntry} />)}
+        </div>
+      </div>
+    </div>
+  )
+}

@@ -1,16 +1,18 @@
 {
-  "name": "livery-lab",
-  "version": "0.1.0",
-  "description": "Self-learning desktop prompt lab for RC scale-model aircraft videos (Seedance 2.0) — Sholacase",
+  "name": "livery-studio",
+  "version": "0.2.0",
+  "description": "Livery Studio — plan, generate, render, review and schedule RC scale-illusion videos (built on the Livery Lab brain) — Sholacase",
   "author": "Sholacase",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "package:win": "electron-vite build && electron-packager . \"Livery Lab\" --platform=win32 --arch=x64 --out=release --overwrite --app-version=0.1.0 --ignore=\"(^/src|^/release|\\.md$|electron-builder\\.yml|tsconfig|electron\\.vite)\""
+    "package:win": "electron-vite build && electron-packager . \"Livery Studio\" --platform=win32 --arch=x64 --out=release --overwrite --app-version=0.2.0 --ignore=\"(^/src|^/release|\\.md$|electron-builder\\.yml|tsconfig|electron\\.vite)\""
   },
-  "dependencies": {},
+  "dependencies": {
+    "playwright-core": "^1.63.0"
+  },
   "devDependencies": {
     "@electron/packager": "^20.0.1",
     "@types/node": "^22.10.2",
@@ -23,5 +25,6 @@
     "react-dom": "^18.3.1",
     "typescript": "^5.7.2",
     "vite": "^5.4.11"
-  }
+  },
+  "productName": "Livery Studio"
 }

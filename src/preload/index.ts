@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
-  AppConfig, Entry, GenerateRequest, GenerateResult, LearningLogEntry, CliTestResult, LogLine, SavedConcept,
+  AppConfig, Entry, GenerateRequest, GenerateResult, LearningLogEntry, CliTestResult, LogLine, SavedConcept, RenderJob, RenderOverview,
 } from '../shared/types'
 
 const api = {
@@ -35,6 +35,25 @@ const api = {
   getSavedConcepts: (): Promise<SavedConcept[]> => ipcRenderer.invoke('concepts:get'),
   saveConcept: (payload: { label: string; brief: string; sourceEntryId?: number }): Promise<SavedConcept> => ipcRenderer.invoke('concepts:save', payload),
   deleteConcept: (id: number): Promise<SavedConcept[]> => ipcRenderer.invoke('concepts:delete', id),
+  // --- Livery Studio: render pipeline ---
+  renderOverview: (): Promise<RenderOverview> => ipcRenderer.invoke('render:overview'),
+  /** Queue renders for these history entry ids (an entry with a live job just returns it). */
+  renderSubmit: (entryIds: number[]): Promise<RenderJob[]> => ipcRenderer.invoke('render:submit', entryIds),
+  renderCancel: (jobId: string): Promise<boolean> => ipcRenderer.invoke('render:cancel', jobId),
+  /** fresh=false re-checks the job's existing Dola chat; fresh=true renders again from scratch. */
+  renderRetry: (jobId: string, fresh: boolean): Promise<boolean> => ipcRenderer.invoke('render:retry', { jobId, fresh }),
+  renderRemove: (jobId: string): Promise<boolean> => ipcRenderer.invoke('render:remove', jobId),
+  renderOpenFile: (file: string): Promise<string> => ipcRenderer.invoke('render:openFile', file),
+  renderShowFile: (file: string): Promise<boolean> => ipcRenderer.invoke('render:showFile', file),
+  renderOpenOutput: (): Promise<string> => ipcRenderer.invoke('render:openOutput'),
+  renderBrowseOutput: (): Promise<string> => ipcRenderer.invoke('render:browseOutput'),
+  onRenderChanged: (cb: (jobs: RenderJob[]) => void): (() => void) => {
+    const handler = (_e: unknown, jobs: RenderJob[]): void => cb(jobs)
+    ipcRenderer.on('render:changed', handler)
+    return () => { ipcRenderer.removeListener('render:changed', handler) }
+  },
+  importFromLab: (): Promise<{ imported: string[]; from: string }> => ipcRenderer.invoke('brain:importLab'),
+  getLabDataDir: (): Promise<string> => ipcRenderer.invoke('brain:labDir'),
   /** Subscribe to real-time activity log lines. Returns an unsubscribe fn. */
   onLog: (cb: (line: LogLine) => void): (() => void) => {
     const handler = (_e: unknown, line: LogLine): void => cb(line)

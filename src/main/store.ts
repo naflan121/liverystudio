@@ -1,12 +1,25 @@
 import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
-import type { AppConfig, Entry, LearningLogEntry, SavedConcept } from '../shared/types'
+import type { AppConfig, Entry, LearningLogEntry, RenderJob, RenderSettings, SavedConcept } from '../shared/types'
 
 // Per-device bootstrap pointer (always in this machine's userData). It records
 // WHERE the actual data lives, so each Windows device can independently point at
 // one shared Google Drive folder and have the playbook + history follow it.
 const LOCATION_FILE = path.join(app.getPath('userData'), 'location.json')
+
+export const DEFAULT_RENDER: RenderSettings = {
+  dailyCap: 15,
+  maxParallel: 0,
+  excludeInstances: [5],
+  outputDir: path.join(app.getPath('videos'), 'Livery Studio'),
+  model: 'Seedance 2.5',
+  duration: '15 Sec',
+  aspect: '9:16 vertical',
+  waitMinutes: 25,
+  autoStartInstances: true,
+  autoRender: false,
+}
 
 export const DEFAULT_CONFIG: AppConfig = {
   cliPath: '',
@@ -34,6 +47,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     hook: false,
     multiShot: false,
   },
+  render: DEFAULT_RENDER,
 }
 
 function readJson<T>(file: string, fallback: T): T {
@@ -91,7 +105,7 @@ export function dataDir(): string {
   return app.getPath('userData')
 }
 
-const FILES = ['config.json', 'history.json', 'playbook.md', 'playbook-versions.json', 'learning-log.jsonl', 'trends.json', 'concepts.json']
+const FILES = ['config.json', 'history.json', 'playbook.md', 'playbook-versions.json', 'learning-log.jsonl', 'trends.json', 'concepts.json', 'renders.json']
 
 /** Point the app at a new data folder; copy existing files over if the target lacks them. */
 export function setDataDir(dir: string): { ok: boolean; message: string; dir: string } {
@@ -100,9 +114,13 @@ export function setDataDir(dir: string): { ok: boolean; message: string; dir: st
     writeJson(LOCATION_FILE, {})
     return { ok: true, message: 'Reset to this device’s default folder.', dir: dataDir() }
   }
+  // Guard: sharing Livery Lab's data folder would let both apps overwrite each other's brain.
+  if (path.resolve(target).toLowerCase() === path.resolve(liveryLabDataDir()).toLowerCase()) {
+    return { ok: false, message: 'That is Livery Lab’s data folder — pick a separate folder for Livery Studio.', dir: dataDir() }
+  }
   try {
     fs.mkdirSync(target, { recursive: true })
-    const probe = path.join(target, '.liverylab-write-test')
+    const probe = path.join(target, '.liverystudio-write-test')
     fs.writeFileSync(probe, 'ok'); fs.unlinkSync(probe)
   } catch (e: any) {
     return { ok: false, message: `Cannot write to that folder: ${e?.message || e}`, dir: dataDir() }
@@ -120,19 +138,69 @@ export function setDataDir(dir: string): { ok: boolean; message: string; dir: st
   return { ok: true, message: 'Data folder set. Your history and playbook now live here.', dir: target }
 }
 
+// --- One-way brain import from Livery Lab ---------------------------------------
+// Livery Studio is a fork of Livery Lab with its own userData, so on first run it
+// starts empty. Seed it from the Lab's data folder (wherever the Lab's own
+// location.json points, e.g. the Google Drive memory folder). Copy only — the
+// Lab's files are never written, so the Lab keeps working untouched beside us.
+export function liveryLabDataDir(): string {
+  const labUserData = path.join(app.getPath('appData'), 'livery-lab')
+  const loc = readJson<{ dataDir?: string }>(path.join(labUserData, 'location.json'), {})
+  return loc.dataDir && loc.dataDir.trim() ? loc.dataDir : labUserData
+}
+
+export function importFromLiveryLab(force = false): { imported: string[]; from: string } {
+  const from = liveryLabDataDir()
+  const to = dataDir()
+  const imported: string[] = []
+  if (path.resolve(from) === path.resolve(to)) return { imported, from }
+  const hasBrain = fs.existsSync(path.join(to, 'history.json')) || fs.existsSync(path.join(to, 'playbook.md'))
+  if (hasBrain && !force) return { imported, from }
+  for (const f of FILES) {
+    const src = path.join(from, f)
+    const dst = path.join(to, f)
+    try {
+      if (!fs.existsSync(src)) continue
+      if (fs.existsSync(dst)) backup(dst)
+      fs.copyFileSync(src, dst)
+      imported.push(f)
+    } catch { /* skip unreadable file (e.g. Drive offline) */ }
+  }
+  return { imported, from }
+}
+
 const p = (f: string) => path.join(dataDir(), f)
+
+// --- Render jobs (main-process owned) ------------------------------------------
+// Kept out of history.json on purpose: the renderer rewrites history wholesale on
+// every save, so background render updates living there would race with scoring.
+
+export function getRenderJobs(): RenderJob[] {
+  return readJsonRecoverable<RenderJob[]>(p('renders.json'), (v) => Array.isArray(v), [])
+}
+
+export function setRenderJobs(jobs: RenderJob[]): void {
+  const file = p('renders.json')
+  backup(file)
+  writeJson(file, jobs.slice(0, 1000))
+}
 
 // --- Config --------------------------------------------------------------------
 
 export function getConfig(): AppConfig {
   const stored = readJson<Partial<AppConfig>>(p('config.json'), {})
-  return { ...DEFAULT_CONFIG, ...stored, defaults: { ...DEFAULT_CONFIG.defaults, ...(stored.defaults || {}) } }
+  return {
+    ...DEFAULT_CONFIG, ...stored,
+    defaults: { ...DEFAULT_CONFIG.defaults, ...(stored.defaults || {}) },
+    render: { ...DEFAULT_RENDER, ...(stored.render || {}) },
+  }
 }
 
 export function setConfig(patch: Partial<AppConfig>): AppConfig {
   const cur = getConfig()
   const next = { ...cur, ...patch }
   if (patch.defaults) next.defaults = { ...cur.defaults, ...patch.defaults }
+  if (patch.render) next.render = { ...cur.render, ...patch.render }
   writeJson(p('config.json'), next)
   return next
 }

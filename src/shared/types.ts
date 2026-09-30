@@ -133,6 +133,8 @@ export interface AppConfig {
     hook: boolean
     multiShot: boolean
   }
+  /** Livery Studio: how prompts get rendered into video on Dola (DolaMultiBrowser). */
+  render: RenderSettings
 }
 
 export interface LearningLogEntry {
@@ -159,4 +161,78 @@ export interface SavedConcept {
   createdAt: string
   /** id of the Entry this was promoted from, for traceability. */
   sourceEntryId?: number
+}
+
+// --- Livery Studio: render pipeline ---------------------------------------------
+
+export interface RenderSettings {
+  /** Max renders SENT to Dola per local calendar day. Jobs past the cap wait for tomorrow. */
+  dailyCap: number
+  /** Max renders running at once. 0 = one per free Dola instance. */
+  maxParallel: number
+  /** DolaMultiBrowser instance ids never used for automatic rendering (reserved for other work). */
+  excludeInstances: number[]
+  /** Folder the watermark-free MP4s (+ a .json sidecar) are saved into. */
+  outputDir: string
+  /** Settings lines typed above the prompt in Dola's Generate Videos skill. */
+  model: string
+  duration: string
+  aspect: string
+  /** How long to wait for Dola to finish one video after it starts. */
+  waitMinutes: number
+  /** Start a stopped instance when no running one is free. */
+  autoStartInstances: boolean
+  /** Queue a render automatically for every newly generated prompt. */
+  autoRender: boolean
+}
+
+export type RenderStatus = 'queued' | 'starting' | 'sending' | 'generating' | 'downloading' | 'done' | 'failed' | 'cancelled'
+
+/** One prompt -> video job. Lives in renders.json (main-owned), linked to its Entry by entryId. */
+export interface RenderJob {
+  id: string
+  entryId: number
+  /** Snapshot of the prompt/title at submit time — the entry can change later. */
+  prompt: string
+  title: string
+  filename: string
+  status: RenderStatus
+  /** Human-readable detail for the current status (why it's waiting, last error…). */
+  note?: string
+  error?: string
+  attempts: number
+  /** Instance ids already tried and abandoned for this job (busy / failed). */
+  tried: number[]
+  instanceId?: number
+  instanceName?: string
+  /** Dola conversation URL once sent — lets an interrupted job resume waiting instead of re-sending. */
+  chatUrl?: string
+  file?: string
+  width?: number
+  height?: number
+  bytes?: number
+  createdAt: string
+  /** When the prompt was actually sent to Dola — this is what counts toward the daily cap. */
+  sentAt?: string
+  endedAt?: string
+}
+
+export interface DolaInstanceInfo {
+  id: number
+  name: string
+  kind: string
+  status: string
+  isInitialized: boolean
+  excluded: boolean
+  busy: boolean
+  cooldownUntil?: number
+}
+
+export interface RenderOverview {
+  jobs: RenderJob[]
+  sentToday: number
+  dailyCap: number
+  /** null when DolaMultiBrowser's Control API is unreachable; error explains why. */
+  instances: DolaInstanceInfo[] | null
+  error?: string
 }

@@ -1,11 +1,14 @@
-import { app, shell, dialog, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, dialog, BrowserWindow, ipcMain, protocol } from 'electron'
+import fs from 'node:fs'
 import path from 'node:path'
+import { Readable } from 'node:stream'
 import { callClaude, testCli } from './claude'
 import {
   getConfig, setConfig, getHistory, setHistory, getPlaybook, setPlaybook,
   getPlaybookVersions, appendLearningLog, getLearningLog, resetMemory, dataDir, setDataDir,
-  getTrends, setTrends, getSavedConcepts, setSavedConcepts,
+  getTrends, setTrends, getSavedConcepts, setSavedConcepts, importFromLiveryLab, liveryLabDataDir,
 } from './store'
+import { initRenderQueue, overview as renderOverview, submit as renderSubmit, cancel as renderCancel, retry as renderRetry, remove as renderRemove, listJobs } from './render'
 import { SYSTEM, TITLE_SYSTEM, LEARN_SYSTEM, EXTRACT_SYSTEM, TREND_SYSTEM, CAPTION_SYSTEM, CONCEPT_SYSTEM, LONG_PROMPT_CHARS, buildUserMessage, titleMsg, captionMsg, buildLearnMessage, buildRedistillMessage, buildConceptMessage, extractMsg, parseScene, parseConcept, trendsMsg, parseVariants } from '../shared/prompts'
 import { cleanTitle, toFilename, clampPlaybook } from '../shared/util'
 import { overusedOperators } from '../shared/brain'
@@ -32,7 +35,7 @@ function createWindow(): void {
     minWidth: 700,
     minHeight: 600,
     backgroundColor: '#FBFAF7',
-    title: 'Livery Lab',
+    title: 'Livery Studio',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
@@ -155,6 +158,30 @@ function recentAnnouncerLines(history: Entry[]): string[] {
     }
   }
   return [...new Set(lines)].slice(0, COMBO_MEMORY)
+}
+
+// --- studio-media:// — lets the renderer <video> play rendered MP4s -----------
+// Only files that belong to a render job are served, with HTTP Range support so
+// the player can seek (a plain file fetch can't).
+protocol.registerSchemesAsPrivileged([{ scheme: 'studio-media', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } }])
+
+function registerMediaProtocol(): void {
+  protocol.handle('studio-media', (req) => {
+    const jobId = new URL(req.url).hostname
+    const file = listJobs().find((j) => j.id.toLowerCase() === jobId.toLowerCase())?.file
+    if (!file || !fs.existsSync(file)) return new Response('Not found', { status: 404 })
+    const size = fs.statSync(file).size
+    const m = /bytes=(\d*)-(\d*)/.exec(req.headers.get('range') || '')
+    if (!m) {
+      return new Response(Readable.toWeb(fs.createReadStream(file)) as any, { status: 200, headers: { 'Content-Type': 'video/mp4', 'Content-Length': String(size), 'Accept-Ranges': 'bytes' } })
+    }
+    const start = m[1] ? +m[1] : Math.max(0, size - +m[2])
+    const end = m[1] && m[2] ? Math.min(+m[2], size - 1) : size - 1
+    return new Response(Readable.toWeb(fs.createReadStream(file, { start, end })) as any, {
+      status: 206,
+      headers: { 'Content-Type': 'video/mp4', 'Content-Length': String(end - start + 1), 'Content-Range': `bytes ${start}-${end}/${size}`, 'Accept-Ranges': 'bytes' },
+    })
+  })
 }
 
 function registerIpc(): void {
@@ -448,6 +475,30 @@ function registerIpc(): void {
     emitLog('ok', `Concept ready: "${concept.label}"`)
     return concept
   }))
+  // --- Livery Studio: render pipeline (Dola / Seedance) ---------------------------
+  ipcMain.handle('render:overview', () => renderOverview())
+  ipcMain.handle('render:submit', (_e, entryIds: number[]) => entryIds.map((id) => renderSubmit(id)))
+  ipcMain.handle('render:cancel', (_e, jobId: string) => { renderCancel(jobId); return true })
+  ipcMain.handle('render:retry', (_e, payload: { jobId: string; fresh: boolean }) => { renderRetry(payload.jobId, payload.fresh); return true })
+  ipcMain.handle('render:remove', (_e, jobId: string) => { renderRemove(jobId); return true })
+  ipcMain.handle('render:openFile', (_e, file: string) => shell.openPath(file))
+  ipcMain.handle('render:showFile', (_e, file: string) => { shell.showItemInFolder(file); return true })
+  ipcMain.handle('render:openOutput', () => {
+    const dir = getConfig().render.outputDir
+    fs.mkdirSync(dir, { recursive: true })
+    return shell.openPath(dir)
+  })
+  ipcMain.handle('render:browseOutput', async () => {
+    const r = await dialog.showOpenDialog(win!, { title: 'Choose where rendered videos are saved', properties: ['openDirectory', 'createDirectory'], defaultPath: getConfig().render.outputDir })
+    return r.canceled || !r.filePaths[0] ? '' : r.filePaths[0]
+  })
+  ipcMain.handle('brain:importLab', () => {
+    const r = importFromLiveryLab(true)
+    emitLog(r.imported.length ? 'ok' : 'warn', r.imported.length ? `Re-imported from Livery Lab (${r.from}): ${r.imported.join(', ')}` : `Nothing to import from ${r.from}`)
+    return r
+  })
+  ipcMain.handle('brain:labDir', () => liveryLabDataDir())
+
   ipcMain.handle('concepts:get', () => getSavedConcepts())
   ipcMain.handle('concepts:save', (_e, payload: { label: string; brief: string; sourceEntryId?: number }) => {
     const saved: SavedConcept = { id: Date.now(), label: payload.label, brief: payload.brief, createdAt: new Date().toISOString(), sourceEntryId: payload.sourceEntryId }
@@ -477,8 +528,15 @@ if (!gotLock) {
   })
 
   app.whenReady().then(() => {
+    // First run: seed the brain (playbook, history, concepts…) from Livery Lab. Copy only.
+    const imported = importFromLiveryLab()
+    registerMediaProtocol()
     registerIpc()
     createWindow()
+    initRenderQueue(emitLog, (jobs) => { if (win && !win.isDestroyed()) win.webContents.send('render:changed', jobs) })
+    if (imported.imported.length) {
+      win?.webContents.once('did-finish-load', () => emitLog('ok', `First run: imported the Livery Lab brain from ${imported.from} (${imported.imported.join(', ')}). The Lab's own files were not touched.`))
+    }
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
   })
 

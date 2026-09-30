@@ -157,6 +157,23 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
 
   const set = (patch: Partial<AppConfig>) => setC((prev) => ({ ...prev, ...patch }))
   const setDef = (patch: Partial<AppConfig['defaults']>) => setC((prev) => ({ ...prev, defaults: { ...prev.defaults, ...patch } }))
+  const setRender = (patch: Partial<AppConfig['render']>) => setC((prev) => ({ ...prev, render: { ...prev.render, ...patch } }))
+  const [excludeDraft, setExcludeDraft] = useState((config.render?.excludeInstances || []).join(', '))
+  const [labDir, setLabDir] = useState('')
+  const [importMsg, setImportMsg] = useState('')
+  useEffect(() => { window.api.getLabDataDir().then(setLabDir).catch(() => { /* ignore */ }) }, [])
+
+  async function browseOutput() {
+    const dir = await window.api.renderBrowseOutput()
+    if (dir) setRender({ outputDir: dir })
+  }
+
+  async function reimportFromLab() {
+    if (!confirm('Replace this studio\'s playbook, history and concepts with a fresh copy from Livery Lab? The current studio files are kept as .bak copies. Render jobs are not affected.')) return
+    const r = await window.api.importFromLab()
+    setImportMsg(r.imported.length ? `Imported ${r.imported.length} file(s). Restart the app to reload everything.` : 'Nothing found to import.')
+    setPb(await window.api.getPlaybook()); onPlaybook(await window.api.getPlaybook())
+  }
 
   async function save() {
     const next = await window.api.setConfig(c)
@@ -452,9 +469,55 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
             </div>
           </Card>
 
+          <Card title="Render · Dola / Seedance">
+            <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>
+              Prompts are rendered through <strong>DolaMultiBrowser</strong> (Control API must be enabled). Each Dola instance renders one video at a time; the watermark-free MP4 lands in the folder below with a .json sidecar. Don't drive the same instances from the dola MCP at the same time.
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px,1fr))', gap: 14 }}>
+              <Field label="Daily cap (renders sent / day)">{num(c.render.dailyCap, (n) => setRender({ dailyCap: Math.max(0, n) }))}</Field>
+              <Field label="Max at once (0 = one per free instance)">{num(c.render.maxParallel, (n) => setRender({ maxParallel: Math.max(0, n) }))}</Field>
+              <Field label="Wait per video (minutes)">{num(c.render.waitMinutes, (n) => setRender({ waitMinutes: Math.max(5, n) }))}</Field>
+            </div>
+            <Field label="Reserved instance ids (never used for rendering, comma-separated)">
+              <input value={excludeDraft} onChange={(e) => { setExcludeDraft(e.target.value); setRender({ excludeInstances: e.target.value.split(',').map((x) => parseInt(x.trim(), 10)).filter((n) => Number.isInteger(n)) }) }} placeholder="e.g. 5, 16" style={{ ...sel, boxSizing: 'border-box' }} />
+            </Field>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px,1fr))', gap: 14 }}>
+              <Field label="Model line"><input value={c.render.model} onChange={(e) => setRender({ model: e.target.value })} style={{ ...sel, boxSizing: 'border-box' }} /></Field>
+              <Field label="Duration line"><input value={c.render.duration} onChange={(e) => setRender({ duration: e.target.value })} style={{ ...sel, boxSizing: 'border-box' }} /></Field>
+              <Field label="Aspect line"><input value={c.render.aspect} onChange={(e) => setRender({ aspect: e.target.value })} style={{ ...sel, boxSizing: 'border-box' }} /></Field>
+            </div>
+            <Field label="Video folder">
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input value={c.render.outputDir} onChange={(e) => setRender({ outputDir: e.target.value })} style={{ ...sel, boxSizing: 'border-box', fontFamily: 'ui-monospace, monospace', fontSize: 12.5 }} />
+                <button onClick={browseOutput} style={{ ...ghostBtn, flexShrink: 0 }}>Choose…</button>
+              </div>
+            </Field>
+            <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13.5 }}>
+                <input type="checkbox" checked={c.render.autoRender} onChange={(e) => setRender({ autoRender: e.target.checked })} style={{ width: 16, height: 16, accentColor: ACCENT }} /> Auto-render every new prompt
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13.5 }}>
+                <input type="checkbox" checked={c.render.autoStartInstances} onChange={(e) => setRender({ autoStartInstances: e.target.checked })} style={{ width: 16, height: 16, accentColor: ACCENT }} /> Start stopped instances when none is free
+              </label>
+            </div>
+          </Card>
+
+          <Card title="Brain source · Livery Lab">
+            <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>
+              Livery Studio started with a <strong>copy</strong> of Livery Lab's brain. The two now learn separately — the Lab's files are never written from here. Re-import only if you kept working in the Lab and want its latest playbook and history here.
+            </div>
+            <Field label="Livery Lab data folder">
+              <code style={{ display: 'block', padding: '9px 11px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 12, fontFamily: 'ui-monospace, monospace', color: INK, wordBreak: 'break-all', background: '#faf9f6' }}>{labDir || '—'}</code>
+            </Field>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button onClick={reimportFromLab} style={ghostBtn}>Re-import from Livery Lab…</button>
+              {importMsg && <span style={{ fontSize: 12.5, color: GOOD }}>{importMsg}</span>}
+            </div>
+          </Card>
+
           <Card title="Data folder · multi-device sync">
             <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>
-              Point this at a <strong>Google Drive folder</strong> to make your history and learned playbook follow you to every PC. On each device, install this app and set the same Drive folder here. <strong>Don’t run the app on two PCs at the same time</strong> — that can cause sync conflicts on the data files.
+              Point this at a <strong>Google Drive folder</strong> to make your history and learned playbook follow you to every PC. <strong>Use a different folder from Livery Lab's</strong> — the two apps must not share data files. On each device, install this app and set the same Drive folder here. <strong>Don’t run the app on two PCs at the same time</strong> — that can cause sync conflicts on the data files.
             </div>
             <Field label="Current data folder">
               <code style={{ display: 'block', padding: '9px 11px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 12, fontFamily: 'ui-monospace, monospace', color: INK, wordBreak: 'break-all', background: '#faf9f6' }}>{dataPath || '—'}</code>

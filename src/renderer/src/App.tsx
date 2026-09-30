@@ -5,9 +5,10 @@ import {
 import { REACH, ILLUSION_TAGS, AIRCRAFT, CAMERA, CROWD, ENV, REGION, SCENARIOS, groupScenarios, pickRandomScenario } from '@shared/domain'
 import { snippet, toFilename, splitSections, parseViews } from '@shared/util'
 import { topInsights } from '@shared/brain'
-import type { AppConfig, Entry, ReachId, LogLine, LogLevel, Scenario, SavedConcept } from '@shared/types'
+import type { AppConfig, Entry, ReachId, LogLine, LogLevel, Scenario, SavedConcept, RenderJob } from '@shared/types'
 import { Settings } from './Settings'
 import { History } from './History'
+import { Renders, RenderStrip, RENDER_META, latestJobByEntry } from './Renders'
 
 const LOG_COLORS: Record<LogLevel, string> = {
   info: '#9c968a', step: '#f2a55e', ok: '#7fc59c', warn: '#e2b53c', err: '#ff8a6b',
@@ -93,7 +94,10 @@ function ago(h: Entry, posted?: boolean) {
 
 export function App() {
   const [config, setConfig] = useState<AppConfig | null>(null)
-  const [view, setView] = useState<'lab' | 'settings' | 'history'>('lab')
+  const [view, setView] = useState<'lab' | 'settings' | 'history' | 'renders'>('lab')
+  const [renderJobs, setRenderJobs] = useState<RenderJob[]>([])
+  const latestRender = useMemo(() => latestJobByEntry(renderJobs), [renderJobs])
+  const liveRenders = renderJobs.filter((j) => RENDER_META[j.status].live).length
   const [history, setHistory] = useState<Entry[]>([])
   const [playbook, setPlaybook] = useState('')
   const brainInsights = useMemo(() => topInsights(history), [history])
@@ -155,6 +159,12 @@ export function App() {
       setPlaybook(await window.api.getPlaybook())
       if (typeof window.api?.getSavedConcepts === 'function') setSavedConcepts(await window.api.getSavedConcepts())
     })()
+  }, [])
+
+  // Render jobs are owned by the main process; mirror them here.
+  useEffect(() => {
+    window.api.renderOverview().then((o) => setRenderJobs(o.jobs)).catch(() => { /* ignore */ })
+    return window.api.onRenderChanged((jobs) => setRenderJobs([...jobs]))
   }, [])
 
   // Stream backend activity into the terminal-style log (cap at 500 lines).
@@ -245,6 +255,13 @@ export function App() {
     })()
   }
 
+  // Settings → Render → "Auto-render new prompts". The history write is async
+  // (persist → IPC), so give it a beat to land before main looks the entry up.
+  function autoRender(entry: Entry) {
+    if (!config?.render?.autoRender) return
+    setTimeout(() => { window.api.renderSubmit([entry.id]).catch(() => flashToast('Auto-render failed to queue — use 🎬 Render')) }, 400)
+  }
+
   // Shared by the scenario-select path, the Random pick, and the AI concept
   // path — all three just need a resolved Scenario to run the same request.
   async function generateFrom(resolved: Scenario) {
@@ -264,6 +281,7 @@ export function App() {
       } else {
         const entry = buildEntry(resolved, await window.api.generate(req), extra)
         setCurrent(entry); persist((prev) => [entry, ...prev])
+        autoRender(entry)
       }
     } catch (e: any) {
       setError(e?.message || 'Could not reach the model. Check Settings → Test connection.')
@@ -319,6 +337,7 @@ export function App() {
       const res = await window.api.generate({ ...buildReq(resolved), remixText: source.text })
       const entry = buildEntry(resolved, res, { remixOf: source.id, conceptBrief: source.conceptBrief })
       setCurrent(entry); persist((prev) => [entry, ...prev])
+      autoRender(entry)
       flashToast('Remix ready ✓')
     } catch (e: any) {
       setError(e?.message || 'Could not reach the model. Check Settings → Test connection.')
@@ -336,6 +355,7 @@ export function App() {
         persist((prev) => prev.map((h) => (h.id === entry.id ? withTitle : h)))
       } catch { /* keep it untitled — "New title" can retry */ }
     }
+    autoRender(entry)
   }
 
   // Ctrl/Cmd+Enter generates from anywhere. A ref keeps the handler pointed at
@@ -435,6 +455,10 @@ export function App() {
     return <Settings config={config} onSave={setConfig} onClose={() => setView('lab')} playbook={playbook} onPlaybook={setPlaybook} onResetMemory={clearAll} />
   }
 
+  if (view === 'renders') {
+    return <Renders entries={history} jobs={renderJobs} onOpenEntry={(h) => { openEntry(h); setView('lab') }} onClose={() => setView('lab')} />
+  }
+
   if (view === 'history') {
     return <History entries={history} openId={cur?.id ?? null} onOpen={(h) => { openEntry(h); setView('lab') }} onClose={() => setView('lab')} />
   }
@@ -446,6 +470,7 @@ export function App() {
     <div style={{ minHeight: '100%', background: PAPER, color: INK, fontFamily: 'ui-sans-serif, system-ui, sans-serif' }}>
       <style>{`
         @keyframes ll-spin{to{transform:rotate(360deg)}}
+        @keyframes ll-pulse{0%,100%{opacity:1}50%{opacity:.35}}
         .ll-wrap{max-width:1440px;margin:0 auto;padding:18px}
         .ll-grid{display:grid;grid-template-columns:340px minmax(0,1fr) 252px;gap:16px;align-items:start}
         @media (max-width:1180px){.ll-grid{grid-template-columns:minmax(280px,320px) minmax(0,1fr)}.ll-recent{grid-column:1 / -1 !important;position:static !important}}
@@ -456,12 +481,13 @@ export function App() {
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 14 }}>
           <div>
-            <div style={{ fontSize: 11, letterSpacing: 2, textTransform: 'uppercase', color: ACCENT, fontWeight: 600 }}>Livery Lab · desktop · self-learning</div>
+            <div style={{ fontSize: 11, letterSpacing: 2, textTransform: 'uppercase', color: ACCENT, fontWeight: 600 }}>Livery Studio · plan · render · review</div>
             <div style={{ fontSize: 22, fontWeight: 600, marginTop: 2 }}>Scale-illusion prompt lab</div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             {learning && <span style={{ color: ACCENT, fontSize: 12.5, fontWeight: 600 }}>teaching playbook…{learnCount > 1 ? ` (${learnCount})` : ''}</span>}
             {(current || candidates.length > 0) && <button onClick={startNew} title="Clear the open prompt (and any leftover Direction from History) so you can generate a fresh one" style={{ ...ghostBtn, padding: '8px 14px' }}>New</button>}
+            <button onClick={() => setView('renders')} style={{ ...ghostBtn, padding: '8px 14px', color: liveRenders ? ACCENT : INK, borderColor: liveRenders ? ACCENT : LINE }}>🎬 Renders{liveRenders ? ` · ${liveRenders}` : ''}</button>
             <button onClick={() => setView('history')} style={{ ...ghostBtn, padding: '8px 14px' }}>History</button>
             <button onClick={() => setView('settings')} style={{ ...ghostBtn, padding: '8px 14px' }}>Settings</button>
           </div>
@@ -667,6 +693,8 @@ export function App() {
                 </div>
               </div>
             )}
+
+            {!loading && !candidates.length && current && <RenderStrip entry={current} job={latestRender.get(current.id)} />}
 
             {!loading && !candidates.length && current && cur && cur.status === 'skipped' ? (
               <div style={{ border: `1px solid ${LINE}`, borderRadius: 12, padding: '14px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', background: PAPER }}>
