@@ -96,6 +96,8 @@ export interface GenerateRequest {
   boost?: boolean
   /** Opt-in long-prompt mode: lift the char limit to LONG_PROMPT_CHARS (4800) for platforms that accept long prompts — extra room for physics, scale cues and negatives. */
   longPrompt?: boolean
+  /** Livery Studio: the long-prompt limit from Settings (set by the main process). Absent = LONG_PROMPT_CHARS. */
+  longPromptChars?: number
   /** Opt-in: feed recent Good/Viral environments for this scenario so the engine varies the setting. */
   varyCoverage: boolean
   /** Opt-in: inject the current trends digest so the engine can ride what's hot. */
@@ -118,6 +120,8 @@ export interface AppConfig {
   learningModel: string
   timeoutMs: number
   charLimit: number
+  /** Livery Studio: character limit when Long prompt is on (Dola accepts long prompts). */
+  longPromptChars: number
   targetMin: number
   targetMax: number
   playbookBudget: number
@@ -134,6 +138,8 @@ export interface AppConfig {
     explore: number
     hook: boolean
     multiShot: boolean
+    /** Livery Studio: Long prompt lever on by default. */
+    longPrompt?: boolean
   }
   /** Livery Studio: how prompts get rendered into video on Dola (DolaMultiBrowser). */
   render: RenderSettings

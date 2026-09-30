@@ -116,7 +116,7 @@ export function App() {
   const [varyCoverage, setVaryCoverage] = useState(false)
   const [useTrends, setUseTrends] = useState(false)
   const [boost, setBoost] = useState(false)
-  const [longPrompt, setLongPrompt] = useState(false)
+  const [longPrompt, setLongPrompt] = useState(true)
   const [candidateMode, setCandidateMode] = useState(false)
   const [candidates, setCandidates] = useState<Entry[]>([])
   const [nudge, setNudge] = useState('')
@@ -156,7 +156,7 @@ export function App() {
       setConfig(cfg)
       setScenario(cfg.defaults.scenario); setAircraft(cfg.defaults.aircraft); setCrowd(cfg.defaults.crowd)
       setEnv(cfg.defaults.env); setCamera(cfg.defaults.camera || 'auto')
-      setExplore(cfg.defaults.explore); setHook(cfg.defaults.hook); setMultiShot(cfg.defaults.multiShot)
+      setExplore(cfg.defaults.explore); setHook(cfg.defaults.hook); setMultiShot(cfg.defaults.multiShot); setLongPrompt(cfg.defaults.longPrompt !== false)
       setHistory(await window.api.getHistory())
       setPlaybook(await window.api.getPlaybook())
       if (typeof window.api?.getSavedConcepts === 'function') setSavedConcepts(await window.api.getSavedConcepts())
@@ -586,7 +586,7 @@ export function App() {
 
             <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13 }}>
               <input type="checkbox" checked={longPrompt} onChange={(e) => setLongPrompt(e.target.checked)} style={{ width: 16, height: 16, accentColor: ACCENT, flexShrink: 0 }} />
-              <span><span style={{ fontWeight: 600 }}>Long prompt (4800 chars).</span> <span style={{ color: MUTE }}>For platforms that accept long prompts — more room for physics, scale cues and negatives. Tracked, so the learner can tell if it helps.</span></span>
+              <span><span style={{ fontWeight: 600 }}>Long prompt ({config.longPromptChars || 4800} chars).</span> <span style={{ color: MUTE }}>For platforms that accept long prompts — more room for physics, scale cues and negatives. Tracked, so the learner can tell if it helps.</span></span>
             </label>
 
             <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13 }}>

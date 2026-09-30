@@ -290,6 +290,7 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
           <Card title="Prompt length">
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px,1fr))', gap: 14 }}>
               <Field label="Hard char limit">{num(c.charLimit, (n) => set({ charLimit: n }))}</Field>
+              <Field label="Long-prompt limit (Long prompt on)">{num(c.longPromptChars || 4800, (n) => set({ longPromptChars: Math.max(1500, n) }))}</Field>
               <Field label="Target min">{num(c.targetMin, (n) => set({ targetMin: n }))}</Field>
               <Field label="Target max">{num(c.targetMax, (n) => set({ targetMax: n }))}</Field>
             </div>
@@ -633,6 +634,9 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13.5 }}>
                 <input type="checkbox" checked={c.defaults.multiShot} onChange={(e) => setDef({ multiShot: e.target.checked })} style={{ width: 16, height: 16, accentColor: ACCENT }} /> Multi-shot on by default
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13.5 }}>
+                <input type="checkbox" checked={c.defaults.longPrompt !== false} onChange={(e) => setDef({ longPrompt: e.target.checked })} style={{ width: 16, height: 16, accentColor: ACCENT }} /> Long prompt on by default
               </label>
             </div>
           </Card>

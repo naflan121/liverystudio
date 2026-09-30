@@ -10,7 +10,7 @@ import path from 'node:path'
 import { getConfig, getRenderLessons, setRenderLessons } from './store'
 import { getEntry, upsertEntries, insertReview, undoLatestReview } from './db'
 import { getJob, updateJob, listJobs, submit } from './render'
-import { SYSTEM, LONG_PROMPT_CHARS } from '../shared/prompts'
+import { SYSTEM, longLimit } from '../shared/prompts'
 import { SCENARIOS } from '../shared/domain'
 import { clampPlaybook } from '../shared/util'
 import { RENDER_LESSONS_SYSTEM, buildRenderLessonMessage, buildFixPromptMessage, reasonLabel } from '../shared/review'
@@ -170,7 +170,7 @@ export async function rewriteAndRender(entryId: number, auto = false): Promise<E
   const cfg = getConfig()
   const rejections = listJobs().filter((j) => j.entryId === entryId && j.review?.verdict === 'rejected').map((j) => j.review!)
   const scenario = SCENARIOS.find((s) => s.id === entry.scenarioId)
-  const charLimit = entry.longPrompt ? LONG_PROMPT_CHARS : (scenario?.charBudget || cfg.charLimit)
+  const charLimit = entry.longPrompt ? longLimit({ longPromptChars: cfg.longPromptChars }) : (scenario?.charBudget || cfg.charLimit)
   deps.emitLog('step', `Rewriting "${entry.title || entry.scenario}" to fix the rejected renders…`)
   const text = (await deps.claude(buildFixPromptMessage({ prompt: entry.text, rejections, lessons: cfg.review.useLessons ? getRenderLessons() : '', charLimit }), { system: SYSTEM, label: 'fix-prompt' })).trim()
   if (!text) throw new Error('The rewrite came back empty.')

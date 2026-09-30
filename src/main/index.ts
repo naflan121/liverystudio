@@ -13,7 +13,7 @@ import { initReview, decide as reviewDecide, undo as reviewUndo, rewriteAndRende
 import { renderLessonsBlock } from '../shared/review'
 import { buildReferenceBlock, fillImage1 } from '../shared/references'
 import { initRenderQueue, overview as renderOverview, submit as renderSubmit, cancel as renderCancel, retry as renderRetry, remove as renderRemove, listJobs, updateJob } from './render'
-import { SYSTEM, TITLE_SYSTEM, LEARN_SYSTEM, EXTRACT_SYSTEM, TREND_SYSTEM, CAPTION_SYSTEM, CONCEPT_SYSTEM, LONG_PROMPT_CHARS, buildUserMessage, titleMsg, captionMsg, buildLearnMessage, buildRedistillMessage, buildConceptMessage, extractMsg, parseScene, parseConcept, trendsMsg, parseVariants } from '../shared/prompts'
+import { SYSTEM, TITLE_SYSTEM, LEARN_SYSTEM, EXTRACT_SYSTEM, TREND_SYSTEM, CAPTION_SYSTEM, CONCEPT_SYSTEM, longLimit, buildUserMessage, titleMsg, captionMsg, buildLearnMessage, buildRedistillMessage, buildConceptMessage, extractMsg, parseScene, parseConcept, trendsMsg, parseVariants } from '../shared/prompts'
 import { cleanTitle, toFilename, clampPlaybook } from '../shared/util'
 import { overusedOperators } from '../shared/brain'
 import type { GenerateRequest, Entry, LogLevel, SavedConcept, RenderJob } from '../shared/types'
@@ -288,8 +288,9 @@ function registerIpc(): void {
     // Some scenarios (e.g. ramp_glide) carry their own, larger character budget
     // because their geometry-matched Negative list cannot fit the default limit;
     // the long-prompt lever lifts it further for platforms that accept ~4800.
-    const charLimit = req.longPrompt ? LONG_PROMPT_CHARS : (req.resolved.charBudget || cfg.charLimit)
-    const rewriteTarget = req.longPrompt ? LONG_PROMPT_CHARS : (req.resolved.charBudget || cfg.targetMax)
+    req.longPromptChars = cfg.longPromptChars
+    const charLimit = req.longPrompt ? longLimit(req) : (req.resolved.charBudget || cfg.charLimit)
+    const rewriteTarget = req.longPrompt ? longLimit(req) : (req.resolved.charBudget || cfg.targetMax)
 
     let text = await callClaude(withRenderLessons(buildUserMessage(req, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends, avoidLines, avoidRecent)), { ...base, system: SYSTEM, label: 'prompt' })
     if (text.length > charLimit) {
@@ -326,6 +327,7 @@ function registerIpc(): void {
     const playbook = getPlaybook()
     const history = getHistory()
     const n = Math.min(Math.max(req.candidates || 3, 2), 4)
+    req.longPromptChars = cfg.longPromptChars
     const base = { cliPath: cfg.cliPath, model: cfg.generationModel, timeoutMs: Math.max(cfg.timeoutMs, 240000), onLog: claudeLog }
     emitLog('step', `Generating ${n} candidates in one call — ${req.resolved.label}`)
     const avoidCombos = req.aircraft !== 'placeholder' ? recentCombos(history, req.resolved.id) : []
@@ -338,7 +340,7 @@ function registerIpc(): void {
     const avoidLines = req.resolved.id === 'ramp_glide' ? recentAnnouncerLines(history) : []
     const trends = req.useTrends ? getTrends().text : ''
     const raw = await callClaude(withRenderLessons(buildUserMessage({ ...req, candidates: n }, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends, avoidLines, avoidRecent)), { ...base, system: SYSTEM, label: 'candidates' })
-    const batchLimit = req.longPrompt ? LONG_PROMPT_CHARS : (req.resolved.charBudget || cfg.charLimit)
+    const batchLimit = req.longPrompt ? longLimit(req) : (req.resolved.charBudget || cfg.charLimit)
     const variants = parseVariants(raw).slice(0, n)
     for (const v of variants) {
       if (v.length > batchLimit) emitLog('warn', `A candidate is over the limit (${v.length} chars) — pick a different one or regenerate.`)
