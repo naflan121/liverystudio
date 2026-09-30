@@ -6,9 +6,11 @@ import { callClaude, testCli } from './claude'
 import {
   getConfig, setConfig, getHistory, setHistory, getPlaybook, setPlaybook,
   getPlaybookVersions, appendLearningLog, getLearningLog, resetMemory, dataDir, setDataDir,
-  getTrends, setTrends, getSavedConcepts, setSavedConcepts, importFromLiveryLab, liveryLabDataDir, pullNewFromLab, initStorage, backupStorage,
+  getTrends, setTrends, getSavedConcepts, setSavedConcepts, importFromLiveryLab, liveryLabDataDir, pullNewFromLab, initStorage, backupStorage, getRenderLessons, setRenderLessons,
 } from './store'
-import { closeDb } from './db'
+import { closeDb, reviewStatsByScenario, rejectReasonCounts } from './db'
+import { initReview, decide as reviewDecide, undo as reviewUndo, rewriteAndRender, rerender, markUnusable } from './review'
+import { renderLessonsBlock } from '../shared/review'
 import { initRenderQueue, overview as renderOverview, submit as renderSubmit, cancel as renderCancel, retry as renderRetry, remove as renderRemove, listJobs } from './render'
 import { SYSTEM, TITLE_SYSTEM, LEARN_SYSTEM, EXTRACT_SYSTEM, TREND_SYSTEM, CAPTION_SYSTEM, CONCEPT_SYSTEM, LONG_PROMPT_CHARS, buildUserMessage, titleMsg, captionMsg, buildLearnMessage, buildRedistillMessage, buildConceptMessage, extractMsg, parseScene, parseConcept, trendsMsg, parseVariants } from '../shared/prompts'
 import { cleanTitle, toFilename, clampPlaybook } from '../shared/util'
@@ -185,6 +187,16 @@ function registerMediaProtocol(): void {
   })
 }
 
+// Livery Studio: rules learned from rejected renders ride along on every new prompt
+// (Settings → Review). Appended outside the brain's own message builder.
+function withRenderLessons(message: string): string {
+  const cfg = getConfig()
+  const lessons = cfg.review.useLessons ? getRenderLessons().trim() : ''
+  if (!lessons) return message
+  emitLog('info', `Render lessons attached: ${lessons.length} chars.`)
+  return message + renderLessonsBlock(lessons)
+}
+
 function registerIpc(): void {
   ipcMain.handle('config:get', () => getConfig())
   ipcMain.handle('config:set', (_e, patch) => setConfig(patch))
@@ -258,7 +270,7 @@ function registerIpc(): void {
     const charLimit = req.longPrompt ? LONG_PROMPT_CHARS : (req.resolved.charBudget || cfg.charLimit)
     const rewriteTarget = req.longPrompt ? LONG_PROMPT_CHARS : (req.resolved.charBudget || cfg.targetMax)
 
-    let text = await callClaude(buildUserMessage(req, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends, avoidLines, avoidRecent), { ...base, system: SYSTEM, label: 'prompt' })
+    let text = await callClaude(withRenderLessons(buildUserMessage(req, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends, avoidLines, avoidRecent)), { ...base, system: SYSTEM, label: 'prompt' })
     if (text.length > charLimit) {
       emitLog('warn', `Over limit (${text.length} > ${charLimit}) — asking for a tighter rewrite`)
       text = await callClaude(
@@ -304,7 +316,7 @@ function registerIpc(): void {
     const avoidEnvs = req.varyCoverage && (req.env === 'auto' || req.resolved.id === 'cliff_drop') ? recentEnvs(history, req.resolved.id) : []
     const avoidLines = req.resolved.id === 'ramp_glide' ? recentAnnouncerLines(history) : []
     const trends = req.useTrends ? getTrends().text : ''
-    const raw = await callClaude(buildUserMessage({ ...req, candidates: n }, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends, avoidLines, avoidRecent), { ...base, system: SYSTEM, label: 'candidates' })
+    const raw = await callClaude(withRenderLessons(buildUserMessage({ ...req, candidates: n }, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends, avoidLines, avoidRecent)), { ...base, system: SYSTEM, label: 'candidates' })
     const batchLimit = req.longPrompt ? LONG_PROMPT_CHARS : (req.resolved.charBudget || cfg.charLimit)
     const variants = parseVariants(raw).slice(0, n)
     for (const v of variants) {
@@ -499,6 +511,16 @@ function registerIpc(): void {
     return r
   })
   ipcMain.handle('brain:labDir', () => liveryLabDataDir())
+
+  // --- Livery Studio: review (Phase 2) -------------------------------------------
+  ipcMain.handle('review:decide', (_e, p: { jobId: string; verdict: 'approved' | 'rejected'; reasons: string[]; comment: string }) => reviewDecide(p.jobId, p.verdict, p.reasons, p.comment))
+  ipcMain.handle('review:undo', (_e, jobId: string) => reviewUndo(jobId))
+  ipcMain.handle('review:rerender', (_e, entryId: number) => rerender(entryId))
+  ipcMain.handle('review:rewrite', (_e, entryId: number) => rewriteAndRender(entryId))
+  ipcMain.handle('review:unusable', (_e, entryId: number) => { markUnusable(entryId); return true })
+  ipcMain.handle('review:stats', () => ({ scenarios: reviewStatsByScenario(), reasons: rejectReasonCounts() }))
+  ipcMain.handle('review:lessons:get', () => getRenderLessons())
+  ipcMain.handle('review:lessons:set', (_e, text: string) => { setRenderLessons(text); return true })
   ipcMain.handle('history:refresh', () => {
     const r = pullNewFromLab()
     emitLog(r.added ? 'ok' : 'info', r.added ? `Pulled ${r.added} new prompt(s) from Livery Lab.` : 'History refreshed — no new prompts in Livery Lab.')
@@ -542,6 +564,14 @@ if (!gotLock) {
     registerIpc()
     createWindow()
     initRenderQueue(emitLog, (jobs) => { if (win && !win.isDestroyed()) win.webContents.send('render:changed', jobs) })
+    initReview({
+      emitLog,
+      claude: (message, o) => exclusive(() => {
+        const cfg = getConfig()
+        return callClaude(message, { cliPath: cfg.cliPath, model: cfg.generationModel, timeoutMs: Math.max(cfg.timeoutMs, 180000), system: o.system, label: o.label, onLog: claudeLog })
+      }),
+      historyChanged: () => { if (win && !win.isDestroyed()) win.webContents.send('history:changed') },
+    })
     win?.webContents.once('did-finish-load', () => {
       if (migrated && (migrated.entries || migrated.jobs)) emitLog('ok', `Moved storage to SQLite: ${migrated.entries} prompt(s) and ${migrated.jobs} render job(s) imported. The old JSON files are left in place as a backup.`)
       if (imported.imported.length) emitLog('ok', `First run: imported the Livery Lab brain from ${imported.from} (${imported.imported.join(', ')}). The Lab's own files were not touched.`)

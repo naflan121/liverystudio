@@ -9,6 +9,7 @@ import type { AppConfig, Entry, ReachId, LogLine, LogLevel, Scenario, SavedConce
 import { Settings } from './Settings'
 import { History } from './History'
 import { Renders, RenderStrip, RENDER_META, latestJobByEntry } from './Renders'
+import { Review } from './Review'
 
 const LOG_COLORS: Record<LogLevel, string> = {
   info: '#9c968a', step: '#f2a55e', ok: '#7fc59c', warn: '#e2b53c', err: '#ff8a6b',
@@ -94,10 +95,11 @@ function ago(h: Entry, posted?: boolean) {
 
 export function App() {
   const [config, setConfig] = useState<AppConfig | null>(null)
-  const [view, setView] = useState<'lab' | 'settings' | 'history' | 'renders'>('lab')
+  const [view, setView] = useState<'lab' | 'settings' | 'history' | 'renders' | 'review'>('lab')
   const [renderJobs, setRenderJobs] = useState<RenderJob[]>([])
   const latestRender = useMemo(() => latestJobByEntry(renderJobs), [renderJobs])
   const liveRenders = renderJobs.filter((j) => RENDER_META[j.status].live).length
+  const awaitingReview = renderJobs.filter((j) => j.status === 'done' && j.file && !j.review).length
   const [history, setHistory] = useState<Entry[]>([])
   const [playbook, setPlaybook] = useState('')
   const brainInsights = useMemo(() => topInsights(history), [history])
@@ -166,6 +168,9 @@ export function App() {
     window.api.renderOverview().then((o) => setRenderJobs(o.jobs)).catch(() => { /* ignore */ })
     return window.api.onRenderChanged((jobs) => setRenderJobs([...jobs]))
   }, [])
+
+  // The main process can add/update prompts on its own (e.g. a rewrite after rejected renders).
+  useEffect(() => window.api.onHistoryChanged(() => { window.api.getHistory().then(setHistory).catch(() => { /* ignore */ }) }), [])
 
   // Stream backend activity into the terminal-style log (cap at 500 lines).
   // Guarded: if the preload is stale and lacks onLog, skip rather than crash.
@@ -458,6 +463,10 @@ export function App() {
     return <Settings config={config} onSave={setConfig} onClose={() => setView('lab')} playbook={playbook} onPlaybook={setPlaybook} onResetMemory={clearAll} />
   }
 
+  if (view === 'review') {
+    return <Review entries={history} jobs={renderJobs} onOpenEntry={(h) => { openEntry(h); setView('lab') }} onClose={() => setView('lab')} />
+  }
+
   if (view === 'renders') {
     return <Renders entries={history} jobs={renderJobs} onOpenEntry={(h) => { openEntry(h); setView('lab') }} onClose={() => setView('lab')}
       onRefresh={async () => { const r = await window.api.refreshHistory(); setHistory(r.history); return r.added }} />
@@ -491,6 +500,7 @@ export function App() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             {learning && <span style={{ color: ACCENT, fontSize: 12.5, fontWeight: 600 }}>teaching playbook…{learnCount > 1 ? ` (${learnCount})` : ''}</span>}
             {(current || candidates.length > 0) && <button onClick={startNew} title="Clear the open prompt (and any leftover Direction from History) so you can generate a fresh one" style={{ ...ghostBtn, padding: '8px 14px' }}>New</button>}
+            <button onClick={() => setView('review')} style={{ ...ghostBtn, padding: '8px 14px', color: awaitingReview ? GOOD : INK, borderColor: awaitingReview ? GOOD : LINE }}>✓ Review{awaitingReview ? ` · ${awaitingReview}` : ''}</button>
             <button onClick={() => setView('renders')} style={{ ...ghostBtn, padding: '8px 14px', color: liveRenders ? ACCENT : INK, borderColor: liveRenders ? ACCENT : LINE }}>🎬 Renders{liveRenders ? ` · ${liveRenders}` : ''}</button>
             <button onClick={() => setView('history')} style={{ ...ghostBtn, padding: '8px 14px' }}>History</button>
             <button onClick={() => setView('settings')} style={{ ...ghostBtn, padding: '8px 14px' }}>Settings</button>

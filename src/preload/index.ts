@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
-  AppConfig, Entry, GenerateRequest, GenerateResult, LearningLogEntry, CliTestResult, LogLine, SavedConcept, RenderJob, RenderOverview,
+  AppConfig, Entry, GenerateRequest, GenerateResult, LearningLogEntry, CliTestResult, LogLine, SavedConcept, RenderJob, RenderOverview, ReviewVerdict,
 } from '../shared/types'
 
 const api = {
@@ -55,6 +55,22 @@ const api = {
   importFromLab: (): Promise<{ imported: string[]; from: string }> => ipcRenderer.invoke('brain:importLab'),
   /** Re-read history and pull in prompts created in Livery Lab since the import (append-only). */
   refreshHistory: (): Promise<{ history: Entry[]; added: number }> => ipcRenderer.invoke('history:refresh'),
+  // --- Livery Studio: review ---
+  reviewDecide: (jobId: string, verdict: ReviewVerdict, reasons: string[], comment: string): Promise<RenderJob> => ipcRenderer.invoke('review:decide', { jobId, verdict, reasons, comment }),
+  reviewUndo: (jobId: string): Promise<RenderJob> => ipcRenderer.invoke('review:undo', jobId),
+  reviewRerender: (entryId: number): Promise<RenderJob> => ipcRenderer.invoke('review:rerender', entryId),
+  /** One Claude call: rewrite the prompt from the rejection reasons + render lessons, then render it. */
+  reviewRewrite: (entryId: number): Promise<Entry> => ipcRenderer.invoke('review:rewrite', entryId),
+  reviewUnusable: (entryId: number): Promise<boolean> => ipcRenderer.invoke('review:unusable', entryId),
+  reviewStats: (): Promise<{ scenarios: { scenario: string; approved: number; rejected: number }[]; reasons: { reason: string; n: number }[] }> => ipcRenderer.invoke('review:stats'),
+  getRenderLessons: (): Promise<string> => ipcRenderer.invoke('review:lessons:get'),
+  setRenderLessons: (text: string): Promise<boolean> => ipcRenderer.invoke('review:lessons:set', text),
+  /** Main changed history on its own (e.g. a rewritten prompt) — reload it. */
+  onHistoryChanged: (cb: () => void): (() => void) => {
+    const handler = (): void => cb()
+    ipcRenderer.on('history:changed', handler)
+    return () => { ipcRenderer.removeListener('history:changed', handler) }
+  },
   getLabDataDir: (): Promise<string> => ipcRenderer.invoke('brain:labDir'),
   /** Subscribe to real-time activity log lines. Returns an unsubscribe fn. */
   onLog: (cb: (line: LogLine) => void): (() => void) => {

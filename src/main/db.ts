@@ -40,6 +40,21 @@ const MIGRATIONS: string[] = [
    CREATE INDEX render_jobs_entry ON render_jobs(entry_id);
    CREATE INDEX render_jobs_sent ON render_jobs(sent_at);
    CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);`,
+  // v2 — review decisions (append-only log; an undo stamps undone_at instead of deleting)
+  `CREATE TABLE reviews (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     job_id TEXT NOT NULL,
+     entry_id INTEGER NOT NULL,
+     verdict TEXT NOT NULL,
+     reasons TEXT NOT NULL DEFAULT '[]',
+     comment TEXT NOT NULL DEFAULT '',
+     scenario_id TEXT,
+     instance TEXT,
+     reviewed_at TEXT NOT NULL,
+     undone_at TEXT
+   );
+   CREATE INDEX reviews_job ON reviews(job_id);
+   CREATE INDEX reviews_entry ON reviews(entry_id);`,
 ]
 
 export function dbPath(): string {
@@ -141,6 +156,33 @@ export function syncRenderJobs(jobs: RenderJob[]): void {
     }
     for (const id of existing.keys()) if (!keep.has(id)) del.run(id)
   })()
+}
+
+// --- reviews ----------------------------------------------------------------------
+
+export function insertReview(r: { jobId: string; entryId: number; verdict: string; reasons: string[]; comment: string; scenarioId?: string; instance?: string; at: string }): void {
+  getDb().prepare(`INSERT INTO reviews (job_id, entry_id, verdict, reasons, comment, scenario_id, instance, reviewed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(r.jobId, r.entryId, r.verdict, JSON.stringify(r.reasons), r.comment, r.scenarioId ?? null, r.instance ?? null, r.at)
+}
+
+/** Mark the job's latest live review as undone. */
+export function undoLatestReview(jobId: string, at: string): void {
+  getDb().prepare(`UPDATE reviews SET undone_at = ? WHERE id = (SELECT id FROM reviews WHERE job_id = ? AND undone_at IS NULL ORDER BY id DESC LIMIT 1)`).run(at, jobId)
+}
+
+export interface ReviewStatRow { scenario: string; approved: number; rejected: number }
+
+/** Live (not undone) verdict counts per scenario — the render reliability of each format. */
+export function reviewStatsByScenario(): ReviewStatRow[] {
+  return getDb().prepare(`SELECT COALESCE(scenario_id, '?') scenario,
+      SUM(verdict = 'approved') approved, SUM(verdict = 'rejected') rejected
+    FROM reviews WHERE undone_at IS NULL GROUP BY scenario ORDER BY rejected DESC`).all() as ReviewStatRow[]
+}
+
+/** Live reason counts across all rejections. */
+export function rejectReasonCounts(): { reason: string; n: number }[] {
+  return getDb().prepare(`SELECT j.value reason, COUNT(*) n FROM reviews, json_each(reviews.reasons) j
+    WHERE verdict = 'rejected' AND undone_at IS NULL GROUP BY j.value ORDER BY n DESC`).all() as { reason: string; n: number }[]
 }
 
 // --- one-time import of the JSON files this app used before SQLite ---------------

@@ -44,6 +44,8 @@ export interface Entry {
   caption?: string
   /** id of the Good/Viral entry this one was remixed from — evidence for the learner. */
   remixOf?: number
+  /** Livery Studio: id of the first prompt in a chain of rewrites made because every rendered take was rejected. */
+  fixOf?: number
   /** Reach Boost was ON for this generation (ceiling-attempt biases from the performance report). A/B-tracked. */
   boost?: boolean
   /** Long-prompt mode was ON (4800-char budget) — evidence for the learner on whether longer prompts score better. */
@@ -135,6 +137,8 @@ export interface AppConfig {
   }
   /** Livery Studio: how prompts get rendered into video on Dola (DolaMultiBrowser). */
   render: RenderSettings
+  /** Livery Studio: review of rendered videos + learning from rejections. */
+  review: ReviewSettings
 }
 
 export interface LearningLogEntry {
@@ -219,6 +223,34 @@ export interface RenderJob {
   /** When the prompt was actually sent to Dola — this is what counts toward the daily cap. */
   sentAt?: string
   endedAt?: string
+  /** Your verdict on the rendered video (absent = awaiting review). */
+  review?: JobReview
+  /** Set when the Studio queued this job by itself after every take of the prompt was rejected. */
+  auto?: 'rerender' | 'rewrite'
+}
+
+export type ReviewVerdict = 'approved' | 'rejected'
+
+export interface JobReview {
+  verdict: ReviewVerdict
+  reasons: string[]
+  comment: string
+  at: string
+}
+
+/** What to do when every rendered take of a prompt has been rejected. */
+export type AllRejectedAction = 'ask' | 'rerender' | 'rewrite'
+
+export interface ReviewSettings {
+  /** After each rejection, one Claude call folds the reasons into the render-lessons memory. */
+  learnFromRejections: boolean
+  /** Add the render lessons to every new prompt the brain writes. */
+  useLessons: boolean
+  /** Size budget for the render-lessons memory (characters). */
+  lessonsBudget: number
+  onAllRejected: AllRejectedAction
+  /** Automatic retries per prompt when onAllRejected is not 'ask'. */
+  maxAutoRetries: number
 }
 
 export interface DolaInstanceInfo {

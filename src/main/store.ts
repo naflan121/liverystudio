@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
-import type { AppConfig, Entry, LearningLogEntry, RenderJob, RenderSettings, SavedConcept } from '../shared/types'
+import type { AppConfig, Entry, LearningLogEntry, RenderJob, RenderSettings, ReviewSettings, SavedConcept } from '../shared/types'
 import {
   getDb, migrateFromJson, backupDb, loadEntries, getEntry, upsertEntries, countEntries, clearEntries,
   loadRenderJobs, syncRenderJobs,
@@ -24,6 +24,14 @@ export const DEFAULT_RENDER: RenderSettings = {
   waitMinutes: 25,
   autoStartInstances: true,
   autoRender: false,
+}
+
+export const DEFAULT_REVIEW: ReviewSettings = {
+  learnFromRejections: true,
+  useLessons: true,
+  lessonsBudget: 1500,
+  onAllRejected: 'ask',
+  maxAutoRetries: 1,
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -53,6 +61,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     multiShot: false,
   },
   render: DEFAULT_RENDER,
+  review: DEFAULT_REVIEW,
 }
 
 function readJson<T>(file: string, fallback: T): T {
@@ -112,7 +121,7 @@ export function dataDir(): string {
 
 // Small documents kept as files in the data folder. History and render jobs live in
 // SQLite (db.ts) in this machine's userData; backups/ holds dated DB snapshots.
-const FILES = ['config.json', 'playbook.md', 'playbook-versions.json', 'learning-log.jsonl', 'trends.json', 'concepts.json']
+const FILES = ['config.json', 'playbook.md', 'playbook-versions.json', 'learning-log.jsonl', 'trends.json', 'concepts.json', 'render-lessons.md']
 
 /** Point the app at a new data folder; copy existing files over if the target lacks them. */
 export function setDataDir(dir: string): { ok: boolean; message: string; dir: string } {
@@ -223,6 +232,7 @@ export function getConfig(): AppConfig {
     ...DEFAULT_CONFIG, ...stored,
     defaults: { ...DEFAULT_CONFIG.defaults, ...(stored.defaults || {}) },
     render: { ...DEFAULT_RENDER, ...(stored.render || {}) },
+    review: { ...DEFAULT_REVIEW, ...(stored.review || {}) },
   }
 }
 
@@ -231,6 +241,7 @@ export function setConfig(patch: Partial<AppConfig>): AppConfig {
   const next = { ...cur, ...patch }
   if (patch.defaults) next.defaults = { ...cur.defaults, ...patch.defaults }
   if (patch.render) next.render = { ...cur.render, ...patch.render }
+  if (patch.review) next.review = { ...cur.review, ...patch.review }
   writeJson(p('config.json'), next)
   return next
 }
@@ -323,6 +334,18 @@ export function getLearningLog(): LearningLogEntry[] {
 }
 
 // --- Trends (current web-research digest, opt-in for generation) ----------------
+
+// --- Render lessons (learned from rejected renders; Livery Studio Phase 2) ------
+
+export function getRenderLessons(): string {
+  try { const f = p('render-lessons.md'); return fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '' } catch { return '' }
+}
+
+export function setRenderLessons(text: string): void {
+  const file = p('render-lessons.md')
+  backup(file)
+  fs.writeFileSync(file, text, 'utf8')
+}
 
 export function getTrends(): { text: string; updatedAt: string } {
   return readJson(p('trends.json'), { text: '', updatedAt: '' })

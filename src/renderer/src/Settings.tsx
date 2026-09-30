@@ -158,6 +158,15 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
   const set = (patch: Partial<AppConfig>) => setC((prev) => ({ ...prev, ...patch }))
   const setDef = (patch: Partial<AppConfig['defaults']>) => setC((prev) => ({ ...prev, defaults: { ...prev.defaults, ...patch } }))
   const setRender = (patch: Partial<AppConfig['render']>) => setC((prev) => ({ ...prev, render: { ...prev.render, ...patch } }))
+  const setReview = (patch: Partial<AppConfig['review']>) => setC((prev) => ({ ...prev, review: { ...prev.review, ...patch } }))
+  const [lessons, setLessons] = useState('')
+  const [lessonsMsg, setLessonsMsg] = useState('')
+  useEffect(() => { window.api.getRenderLessons().then(setLessons).catch(() => { /* ignore */ }) }, [])
+  async function saveLessons() {
+    await window.api.setRenderLessons(lessons)
+    setLessonsMsg('Saved')
+    setTimeout(() => setLessonsMsg(''), 1800)
+  }
   const [excludeDraft, setExcludeDraft] = useState((config.render?.excludeInstances || []).join(', '))
   const [labDir, setLabDir] = useState('')
   const [importMsg, setImportMsg] = useState('')
@@ -507,6 +516,44 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13.5 }}>
                 <input type="checkbox" checked={c.render.autoStartInstances} onChange={(e) => setRender({ autoStartInstances: e.target.checked })} style={{ width: 16, height: 16, accentColor: ACCENT }} /> Start stopped instances when none is free
               </label>
+            </div>
+          </Card>
+
+          <Card title="Review · learning from rejected renders">
+            <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>
+              Every finished render waits in <strong>Review</strong>. Approved takes move to <code>approved\</code> and rejected ones to <code>rejected\</code> inside the video folder. Rejection reasons build a compact <strong>render lessons</strong> memory that rides along on new prompts, separate from the reach playbook.
+            </div>
+            <div style={{ display: 'grid', gap: 10 }}>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', fontSize: 13.5 }}>
+                <input type="checkbox" checked={c.review.learnFromRejections} onChange={(e) => setReview({ learnFromRejections: e.target.checked })} style={{ width: 16, height: 16, accentColor: ACCENT, marginTop: 2 }} />
+                <span>Learn from each rejection <span style={{ color: MUTE }}>— one Claude call per rejection (generation model). Off = reasons are still recorded, lessons don't update.</span></span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', fontSize: 13.5 }}>
+                <input type="checkbox" checked={c.review.useLessons} onChange={(e) => setReview({ useLessons: e.target.checked })} style={{ width: 16, height: 16, accentColor: ACCENT, marginTop: 2 }} />
+                <span>Use render lessons when writing prompts <span style={{ color: MUTE }}>— adds the lessons below to each generation (a few hundred extra tokens per prompt).</span></span>
+              </label>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px,1fr))', gap: 14 }}>
+              <Field label="When every take of a prompt is rejected">
+                <select value={c.review.onAllRejected} onChange={(e) => setReview({ onAllRejected: e.target.value as AppConfig['review']['onAllRejected'] })} style={sel}>
+                  <option value="ask">Ask me (show options in Review)</option>
+                  <option value="rerender">Re-render the same prompt automatically</option>
+                  <option value="rewrite">Rewrite with lessons, then render automatically</option>
+                </select>
+              </Field>
+              <Field label="Automatic retries per prompt">{num(c.review.maxAutoRetries, (n) => setReview({ maxAutoRetries: Math.max(0, n) }))}</Field>
+              <Field label="Lessons size budget (characters)">{num(c.review.lessonsBudget, (n) => setReview({ lessonsBudget: Math.max(300, n) }))}</Field>
+            </div>
+            <div style={{ fontSize: 12, color: MUTE, lineHeight: 1.55 }}>
+              Cost: <strong>re-render</strong> uses one Dola render from today's cap and no Claude tokens. <strong>Rewrite</strong> adds one Claude call, then the render. Retries are counted per prompt (including its rewrites), so a stubborn prompt stops after the limit and waits for you.
+            </div>
+            <Field label="Render lessons (editable — what gets added to new prompts)">
+              <textarea value={lessons} onChange={(e) => setLessons(e.target.value)} rows={7} placeholder="Empty until you reject a render with learning on." style={{ width: '100%', padding: '10px 12px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 12.5, boxSizing: 'border-box', resize: 'vertical', fontFamily: 'ui-monospace, monospace', color: INK }} />
+            </Field>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button onClick={saveLessons} style={ghostBtn}>Save lessons</button>
+              <span style={{ fontSize: 12, color: MUTE }}>{lessons.length} / {c.review.lessonsBudget} chars</span>
+              {lessonsMsg && <span style={{ fontSize: 12.5, color: GOOD }}>{lessonsMsg}</span>}
             </div>
           </Card>
 

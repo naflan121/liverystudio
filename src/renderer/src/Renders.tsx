@@ -44,6 +44,8 @@ function JobCard({ job, onOpenEntry, entry }: { job: RenderJob; entry?: Entry; o
           <div style={{ fontSize: 13.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{job.title}</div>
           <div style={{ fontSize: 11.5, color: MUTE }}>
             <span style={{ color: meta.color, fontWeight: 600 }}>{meta.label}</span>
+            {job.review && <span style={{ color: job.review.verdict === 'approved' ? GOOD : BAD, fontWeight: 600 }}> · {job.review.verdict}</span>}
+            {job.status === 'done' && !job.review && <span style={{ color: ACCENT }}> · awaiting review</span>}
             {job.instanceName ? ` · ${job.instanceName}` : ''}
             {job.status === 'done' ? ` · ${since(job.endedAt)}${job.bytes ? ` · ${(job.bytes / 1e6).toFixed(1)} MB` : ''}${job.width ? ` · ${job.width}×${job.height}` : ''}` : ` · queued ${since(job.createdAt)}`}
           </div>

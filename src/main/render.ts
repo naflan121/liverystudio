@@ -8,7 +8,8 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { getConfig, getRenderJobs, setRenderJobs, getHistory } from './store'
+import { getConfig, getRenderJobs, setRenderJobs } from './store'
+import { getEntry } from './db'
 import { listInstances, startInstance, getPage, forget, fillVideoPrompt, sendAndHandleBusy, waitForVideo, Cancelled } from './dola/driver'
 import { resolveFallbackApi, downloadFile } from './dola/resolver'
 import type { RenderJob, RenderOverview, DolaInstanceInfo, LogLevel } from '../shared/types'
@@ -81,16 +82,28 @@ export async function overview(): Promise<RenderOverview> {
   }
 }
 
+export function getJob(jobId: string): RenderJob | undefined {
+  return jobs.find((j) => j.id === jobId)
+}
+
+/** Patch a job from outside the queue (e.g. a review moved its file). */
+export function updateJob(jobId: string, p: Partial<RenderJob>): RenderJob | undefined {
+  const job = getJob(jobId)
+  if (job) patch(job, p)
+  return job
+}
+
 /** Queue a render for a history entry. Re-submitting an entry that already has a live job returns that job. */
-export function submit(entryId: number): RenderJob {
+export function submit(entryId: number, opts: { auto?: RenderJob['auto'] } = {}): RenderJob {
   const live = jobs.find((j) => j.entryId === entryId && !TERMINAL.has(j.status))
   if (live) return live
-  const entry = getHistory().find((h) => h.id === entryId)
+  const entry = getEntry(entryId)
   if (!entry) throw new Error('That prompt is no longer in history.')
   const job: RenderJob = {
     id: `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
     entryId, prompt: entry.text, title: entry.title || entry.scenario, filename: entry.filename || 'clip.mp4',
     status: 'queued', attempts: 0, tried: [], createdAt: new Date().toISOString(),
+    ...(opts.auto ? { auto: opts.auto } : {}),
   }
   jobs.unshift(job)
   save()
