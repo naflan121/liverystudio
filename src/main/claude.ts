@@ -126,10 +126,21 @@ export function callClaude(userContent: string, opts: ClaudeOptions): Promise<st
       '--system-prompt-file', sysFile,
       '--model', opts.model,
       '--output-format', 'json',
+      // Lean launch: the Studio only ever wants text back, so skip what the CLI loads
+      // for coding sessions. Measured on a trivial call: ~27,700 context tokens
+      // (built-in tool definitions ~17k + the user's MCP servers' tools ~10k) -> ~570.
+      // Also stops every call from starting the user's MCP servers.
+      '--strict-mcp-config',          // no MCP servers (none are passed via --mcp-config)
+      '--disable-slash-commands',     // no skills list
+      '--no-session-persistence',     // don't write a session file per call
     ]
-    // Whitelist web tools when requested — runs headlessly with no permission prompt.
+    // Tools: none, except the ones a call explicitly needs (trend research uses web
+    // search) — those are both made available and pre-approved for headless use.
+    // (Not --bare: it drops the OAuth login the Studio relies on.)
     if (opts.allowedTools && opts.allowedTools.length) {
-      args.push('--allowedTools', ...opts.allowedTools)
+      args.push('--tools', opts.allowedTools.join(','), '--allowedTools', ...opts.allowedTools)
+    } else {
+      args.push('--tools', '')
     }
 
     log('info', `${tag}Launching CLI · model ${opts.model} · prompt ${userContent.length} chars`)
