@@ -15,9 +15,10 @@ import { closeDb, reviewStatsByScenario, rejectReasonCounts, getEntry as getEntr
 import { initReview, decide as reviewDecide, undo as reviewUndo, rewriteAndRender, rerender, markUnusable } from './review'
 import { renderLessonsBlock } from '../shared/review'
 import { varietyNote } from '../shared/variety'
+import { DOLA_CHECK_SYSTEM, dolaCheckMsg, parseDolaCheck, type RenderCheckResult } from '../shared/renderCheck'
 import { BRAINSTORM_SYSTEM, buildBrainstormMessage, parseBrainstorm, formatEvidence, triedConceptList } from '../shared/brainstorm'
 import { buildReferenceBlock, fillImage1 } from '../shared/references'
-import { initRenderQueue, overview as renderOverview, submit as renderSubmit, cancel as renderCancel, retry as renderRetry, remove as renderRemove, listJobs, updateJob, pauseQueue, resumeQueue, setOnRenderDone, clearCredits } from './render'
+import { initRenderQueue, readJobReply, actOnJob, clearCooldown, overview as renderOverview, submit as renderSubmit, cancel as renderCancel, retry as renderRetry, remove as renderRemove, listJobs, updateJob, pauseQueue, resumeQueue, setOnRenderDone, clearCredits } from './render'
 import { SYSTEM, TITLE_SYSTEM, LEARN_SYSTEM, EXTRACT_SYSTEM, TREND_SYSTEM, CAPTION_SYSTEM, CONCEPT_SYSTEM, longLimit, buildUserMessage, titleMsg, captionMsg, buildLearnMessage, buildRedistillMessage, buildConceptMessage, extractMsg, parseScene, parseConcept, trendsMsg, parseVariants } from '../shared/prompts'
 import { cleanTitle, toFilename, clampPlaybook } from '../shared/util'
 import { overusedOperators } from '../shared/brain'
@@ -585,6 +586,22 @@ function registerIpc(): void {
   ipcMain.handle('notify:test', () => notify('test', 'Livery Studio notifications work', 'This is how render, failure and pause alerts will look.', 'today', true))
   ipcMain.handle('render:submit', (_e, entryIds: number[], opts?: { references?: boolean }) => entryIds.map((id) => renderSubmit(id, opts || {})))
   ipcMain.handle('render:cancel', (_e, jobId: string) => { renderCancel(jobId); return true })
+  // Check: read the job's latest Dola reply and have the cheap model (Engine per task →
+  // Renders → Check) say what it means. Not serialised with generation — it's quick.
+  ipcMain.handle('render:check', async (_e, jobId: string): Promise<RenderCheckResult> => {
+    const r = await readJobReply(jobId)
+    const base = { reply: r.text.slice(0, 1500), hasVideo: r.hasVideo, instanceName: r.instanceName, sentAt: r.sentAt, checkedAt: new Date().toISOString() }
+    if (r.hasVideo) return { ...base, kind: 'finished', advice: 'wait', summary: 'A video is in the chat — the render should pick it up on its next look (or use Check again on a failed job).' }
+    if (!r.text) return { ...base, kind: 'unclear', advice: 'wait', summary: 'Dola has not replied in this chat yet.' }
+    const mins = r.sentAt ? Math.round((Date.now() - new Date(r.sentAt).getTime()) / 60000) : null
+    emitLog('step', `Checking Dola's last reply on ${r.instanceName}…`)
+    const raw = await runRoute(getConfig().ai.routes.dolaCheck, dolaCheckMsg(r.text, mins), { system: DOLA_CHECK_SYSTEM, label: 'dola-check', timeoutMs: 90000 })
+    const res = { ...base, ...parseDolaCheck(raw) }
+    emitLog(res.kind === 'working' || res.kind === 'finished' ? 'info' : 'warn', `Dola check (${r.instanceName}): ${res.kind} — ${res.summary}`)
+    return res
+  })
+  ipcMain.handle('render:act', (_e, jobId: string, action: 'rerender' | 'move' | 'cancel', cooldownMinutes?: number) => { actOnJob(jobId, action, cooldownMinutes || 0); return true })
+  ipcMain.handle('render:clearCooldown', (_e, id: number) => { clearCooldown(id); return true })
   ipcMain.handle('render:retry', (_e, payload: { jobId: string; fresh: boolean }) => { renderRetry(payload.jobId, payload.fresh); return true })
   ipcMain.handle('render:remove', (_e, jobId: string) => { renderRemove(jobId); return true })
   ipcMain.handle('render:openFile', (_e, file: string) => shell.openPath(file))

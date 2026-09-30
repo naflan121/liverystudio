@@ -292,7 +292,7 @@ export interface AiSettings {
     dailyTokenLimit: number
   }
   /** Which engine writes titles, captions, coverage notes and reference-image names. Generation + learning use generationModel / learningModel. */
-  routes: { title: EngineRoute; caption: EngineRoute; scene: EngineRoute; refAircraft: EngineRoute }
+  routes: { title: EngineRoute; caption: EngineRoute; scene: EngineRoute; refAircraft: EngineRoute; /** Renders → Check: reading Dola's last reply. */ dolaCheck: EngineRoute }
   precheck: {
     /** Let a MiniMax video model watch each finished render and suggest approve/reject. */
     enabled: boolean

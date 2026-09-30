@@ -67,7 +67,7 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
     render: { ...config.render, pauseAfterFailures: config.render?.pauseAfterFailures ?? 3, creditResetHour: config.render?.creditResetHour ?? 0 },
     ai: {
       minimax: { enabled: false, cliPath: '', dailyTokenLimit: 500000, ...(config.ai?.minimax || {}) },
-      routes: { title: 'claude:generation', caption: 'claude:generation', scene: 'claude:claude-haiku-4-5', refAircraft: 'claude:claude-haiku-4-5', ...(config.ai?.routes || {}) },
+      routes: { title: 'claude:generation', caption: 'claude:generation', scene: 'claude:claude-haiku-4-5', refAircraft: 'claude:claude-haiku-4-5', dolaCheck: 'claude:claude-haiku-4-5', ...(config.ai?.routes || {}) },
       precheck: { enabled: false, model: 'MiniMax-M3', auto: true, ...(config.ai?.precheck || {}) },
     },
   }))
@@ -411,6 +411,7 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
                 ['caption', 'Captions + hashtags'],
                 ['scene', 'Coverage notes (aircraft + setting)'],
                 ['refAircraft', 'Reference images — naming the aircraft'],
+                ['dolaCheck', 'Renders → Check (reading Dola replies)'],
               ] as const).map(([k, label]) => (
                 <Field key={k} label={label}>
                   <select value={c.ai.routes[k]} onChange={(e) => setAi('routes', { [k]: e.target.value })} style={sel}>

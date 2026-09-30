@@ -99,6 +99,18 @@ call on the learning model; proven formats are passed as real numbers (3+ scored
 and an idea may only borrow from one the data backs (`BORROWS:` line). UI: "🧠 Brainstorm
 concepts" (lab/Ideas.tsx) and the lineup Mix "Fresh concepts" (one brainstorm per lineup).
 
+**Renders → Check (`render:check` / `render:act`).** Any job that reached Dola (has
+`chatUrl`) gets a 🔎 Check button, whatever its age. `readJobReply()` (render.ts) reads the
+chat's last reply via `readLastReply()` (driver.ts, hard 15 s timeout) — without navigating
+if a job is running on that instance, refusing if another job holds it. The text goes to the
+`ai.routes.dolaCheck` engine (default Haiku) with `DOLA_CHECK_SYSTEM` (shared/renderCheck.ts):
+kind (refused/busy/credits/working/finished/error/unclear) + advice + summary — no hard-coded
+Dola wording. Actions: `actOnJob()` re-render / move (adds the instance to `tried`) / cancel,
+optionally cooling the instance down (`setCooldown`, persisted in meta `dola_cooldown`). A
+running job is interrupted via `pendingAction` + cancel flag; if its page is frozen it's
+released by force after 60 s. Each run carries a token (`runTokens`); `own()` in runJob stops
+a released run from touching the job or freeing the instance.
+
 ## What the brain is (inherited from Livery Lab)
 
 **Livery Lab** — a self-learning Electron desktop app that generates

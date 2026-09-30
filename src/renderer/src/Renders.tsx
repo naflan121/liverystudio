@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { INK, PAPER, LINE, MUTE, ACCENT, INFO, GOOD, BAD, WAIT, SCREEN, ghostBtn, eyebrow, pageTitle } from './ui'
 import { snippet } from '@shared/util'
 import type { Entry, RenderJob, RenderOverview, RenderStatus } from '@shared/types'
+import type { RenderCheckResult, DolaReplyKind } from '@shared/renderCheck'
 
 export const RENDER_META: Record<RenderStatus, { label: string; color: string; live: boolean }> = {
   queued: { label: 'Queued', color: WAIT, live: true },
@@ -58,6 +59,74 @@ export function latestJobByEntry(jobs: RenderJob[]): Map<number, RenderJob> {
   return m
 }
 
+const KIND_META: Record<DolaReplyKind, { label: string; color: string }> = {
+  working: { label: 'Still working', color: INFO },
+  finished: { label: 'Finished', color: GOOD },
+  refused: { label: 'Refused by Dola', color: BAD },
+  busy: { label: 'Dola busy', color: 'var(--warn)' },
+  credits: { label: 'Out of credits', color: 'var(--warn)' },
+  error: { label: 'Dola error', color: BAD },
+  unclear: { label: 'Unclear', color: MUTE },
+}
+const ADVICE_LABEL = { wait: 'wait a bit longer', rerender: 're-render', move: 'move it to another account', cancel: 'cancel it', rewrite: 'rewrite the prompt, then re-render' } as const
+const COOLDOWNS = [{ m: 30, l: '30 min' }, { m: 120, l: '2 h' }, { m: 360, l: '6 h' }, { m: 1440, l: '24 h' }]
+
+/** "Check" on a sent job: read Dola's last reply, a cheap model explains it, then act. */
+function CheckPanel({ job }: { job: RenderJob }) {
+  const [busy, setBusy] = useState(false)
+  const [res, setRes] = useState<RenderCheckResult | null>(null)
+  const [err, setErr] = useState('')
+  const [cool, setCool] = useState(false)
+  const [coolMin, setCoolMin] = useState(120)
+  const [showReply, setShowReply] = useState(false)
+  async function check() {
+    setBusy(true); setErr('')
+    try { setRes(await window.api.renderCheck(job.id)) } catch (e: any) {
+      setErr(String(e?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''))
+    } finally { setBusy(false) }
+  }
+  const act = (a: 'rerender' | 'move' | 'cancel') => { window.api.renderAct(job.id, a, cool ? coolMin : 0); setRes(null) }
+  const km = res ? KIND_META[res.kind] : null
+  const actions = (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            <button onClick={() => act('rerender')} title="Stop this attempt and send the prompt again from scratch" style={small}>Re-render</button>
+            <button onClick={() => act('move')} title="Stop on this account and send the prompt on a different one" style={small}>Move to another account</button>
+            <button onClick={() => act('cancel')} style={{ ...small, color: MUTE }}>Cancel job</button>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, marginLeft: 6, cursor: 'pointer' }} title="New renders skip this account until the cooldown ends">
+              <input type="checkbox" checked={cool} onChange={(e) => setCool(e.target.checked)} style={{ accentColor: ACCENT, width: 14, height: 14 }} />
+              Cool down {res?.instanceName || job.instanceName || 'this account'} for
+              <select value={coolMin} onChange={(e) => setCoolMin(+e.target.value)} disabled={!cool} style={{ fontSize: 12, padding: '1px 4px', borderRadius: 6, border: `1px solid ${LINE}`, background: 'var(--surface)', color: INK }}>
+                {COOLDOWNS.map((c) => <option key={c.m} value={c.m}>{c.l}</option>)}
+              </select>
+            </label>
+          </div>
+  )
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button onClick={check} disabled={busy} title="Read Dola's latest reply in this chat and have a quick model explain it" style={{ ...small, color: ACCENT, borderColor: ACCENT, opacity: busy ? 0.6 : 1 }}>{busy ? 'Checking…' : res ? '🔎 Check again' : '🔎 Check'}</button>
+        {job.sentAt && <span style={{ fontSize: 11.5, color: MUTE }}>sent {since(job.sentAt)}</span>}
+        {err && <span style={{ fontSize: 12, color: BAD }}>{err}</span>}
+      </div>
+      {err && !res && actions}
+      {res && km && (
+        <div style={{ border: `1px solid ${LINE}`, borderRadius: 10, padding: '10px 12px', display: 'grid', gap: 8, background: PAPER }}>
+          <div style={{ fontSize: 13 }}>
+            <span style={{ color: km.color, fontWeight: 700 }}>{km.label}</span>
+            <span> — {res.summary}</span>
+          </div>
+          <div style={{ fontSize: 12, color: MUTE }}>
+            Suggested: <strong style={{ color: INK }}>{ADVICE_LABEL[res.advice]}</strong> · {res.instanceName} · checked {since(res.checkedAt)}
+            {res.reply && <> · <button onClick={() => setShowReply((v) => !v)} style={{ all: 'unset', cursor: 'pointer', color: ACCENT }}>{showReply ? 'hide' : 'show'} Dola's reply</button></>}
+          </div>
+          {showReply && res.reply && <div style={{ fontSize: 12, fontFamily: 'var(--f-mono)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 160, overflow: 'auto', borderLeft: `3px solid ${LINE}`, paddingLeft: 8 }}>{res.reply}</div>}
+          {actions}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function JobCard({ job, onOpenEntry, entry }: { job: RenderJob; entry?: Entry; onOpenEntry: (h: Entry) => void }) {
   const meta = RENDER_META[job.status]
   const [preview, setPreview] = useState(false)
@@ -88,6 +157,7 @@ function JobCard({ job, onOpenEntry, entry }: { job: RenderJob; entry?: Entry; o
         </span>
       </div>
       {job.note && <div style={{ fontSize: 12, color: MUTE }}>{job.note}</div>}
+      {job.chatUrl && job.instanceId != null && (meta.live || job.status === 'failed') && <CheckPanel job={job} />}
       {job.error && <div style={{ fontSize: 12, color: BAD, background: 'var(--bad-soft)', borderRadius: 8, padding: '6px 10px', wordBreak: 'break-word' }}>{job.error}</div>}
       {preview && job.file && (
         <video src={`studio-media://${job.id}/video.mp4`} controls autoPlay style={{ width: '100%', maxHeight: 560, borderRadius: 10, background: SCREEN }} />
@@ -257,12 +327,14 @@ export function Renders({ entries, jobs, onOpenEntry, onClose, onRefresh, refsDe
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                       {ov.instances.map((i) => {
                         const back = i.creditsOutUntil ? new Date(i.creditsOutUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
-                        const state = i.excluded ? 'reserved' : i.busy ? 'rendering' : i.creditsOutUntil ? `no credits · back ${back}` : i.cooldownUntil ? 'cooling down' : i.isInitialized ? 'ready' : 'stopped'
+                        const coolTo = i.cooldownUntil ? new Date(i.cooldownUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
+                        const state = i.excluded ? 'reserved' : i.busy ? 'rendering' : i.creditsOutUntil ? `no credits · back ${back}` : i.cooldownUntil ? `cooling down · until ${coolTo}` : i.isInitialized ? 'ready' : 'stopped'
                         const color = i.excluded ? MUTE : i.busy ? INFO : i.creditsOutUntil ? 'var(--warn)' : i.cooldownUntil ? 'var(--warn)' : i.isInitialized ? GOOD : WAIT
                         return (
                           <span key={i.id} title={`#${i.id} · ${i.status}${i.creditsOutUntil ? ` · out of Dola video credits${i.creditsNeed != null ? ` (needs ${i.creditsNeed}, had ${i.creditsLeft ?? 0})` : ''}` : ''}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${LINE}`, borderRadius: 20, padding: '4px 10px', fontSize: 12, opacity: i.excluded ? 0.6 : 1 }}>
                             <span style={{ width: 7, height: 7, borderRadius: '50%', background: color }} />
                             <strong style={{ fontWeight: 600 }}>{i.name}</strong><span style={{ color: MUTE }}>{state}</span>
+                            {i.cooldownUntil && !i.busy && <button onClick={() => window.api.renderClearCooldown(i.id).then(() => window.api.renderOverview().then(setOv))} title="End this cooldown now" style={{ all: 'unset', cursor: 'pointer', color: MUTE, fontSize: 13, lineHeight: 1 }}>×</button>}
                           </span>
                         )
                       })}

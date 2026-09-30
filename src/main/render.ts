@@ -11,7 +11,7 @@ import path from 'node:path'
 import { getConfig, getRenderJobs, setRenderJobs } from './store'
 import { getEntry, getMeta, setMeta } from './db'
 import { notify } from './notify'
-import { listInstances, startInstance, showInstance, waitUntilDrawn, getPage, forget, fillVideoPrompt, sendAndHandleBusy, waitForVideo, Cancelled, NoCreditsError, type CreditsInfo } from './dola/driver'
+import { listInstances, startInstance, showInstance, waitUntilDrawn, getPage, forget, fillVideoPrompt, sendAndHandleBusy, waitForVideo, readLastReply, Cancelled, NoCreditsError, type CreditsInfo } from './dola/driver'
 import { resolveFallbackApi, downloadFile } from './dola/resolver'
 import type { RenderJob, RenderOverview, DolaInstanceInfo, LogLevel, QueuePause } from '../shared/types'
 
@@ -29,8 +29,26 @@ let resolveReferences: (job: RenderJob) => Promise<string> = async () => ''
 
 let jobs: RenderJob[] = []
 const activeInstances = new Set<number>()
-const cooldown = new Map<number, number>() // instance id -> ms timestamp
+const cooldown = new Map<number, number>() // instance id -> ms timestamp (persisted in meta 'dola_cooldown')
 const cancelFlags = new Map<string, boolean>()
+const activeJob = new Map<number, string>() // instance id -> id of the job running on it
+/** What to do once a running job has been interrupted by the "Check" actions. */
+type JobAction = 'rerender' | 'move' | 'cancel'
+const pendingAction = new Map<string, JobAction>()
+// Each run of a job gets a token; a run whose token was revoked (forced release of a
+// frozen page) may no longer touch the job or free the instance.
+const runTokens = new Map<string, number>()
+let tokenSeq = 0
+
+function loadCooldown(): void {
+  try { for (const [id, until] of Object.entries(JSON.parse(getMeta('dola_cooldown') || '{}') as Record<string, number>)) if (until > Date.now()) cooldown.set(+id, until) } catch { /* none */ }
+}
+function setCooldown(id: number, until: number): void {
+  cooldown.set(id, until)
+  const live: Record<string, number> = {}
+  for (const [k, v] of cooldown) if (v > Date.now()) live[k] = v
+  setMeta('dola_cooldown', JSON.stringify(live))
+}
 
 function save(): void {
   setRenderJobs(jobs)
@@ -142,6 +160,7 @@ export function initRenderQueue(log: Emit, change: OnChange, refs?: (job: Render
   if (refs) resolveReferences = refs
   jobs = getRenderJobs()
   loadCredits()
+  loadCooldown()
   // Anything mid-flight when the app last closed: resume waiting if it was already
   // sent (chatUrl known), otherwise put it back in the queue from scratch.
   let resumed = 0, requeued = 0
@@ -226,6 +245,75 @@ export function retry(jobId: string, fresh: boolean): void {
   pump()
 }
 
+// ---------- "Check" on a sent job: read Dola's last reply, then act on it ----------
+
+export interface ReplyRead { text: string; hasVideo: boolean; instanceName: string; sentAt?: string; status: RenderJob['status'] }
+
+/** Read the last reply in the job's Dola chat without disturbing anything else running. */
+export async function readJobReply(jobId: string): Promise<ReplyRead> {
+  const job = getJob(jobId)
+  if (!job) throw new Error('That render is no longer in the list.')
+  if (!job.chatUrl || job.instanceId == null) throw new Error('This render has not reached Dola yet — nothing to read.')
+  const holder = activeJob.get(job.instanceId)
+  if (holder && holder !== job.id) throw new Error(`${job.instanceName || 'Its Dola account'} is busy with another render, so its chat can't be opened right now. Try again in a bit, or Move this one to another account.`)
+  const { page } = await getPage(job.instanceId)
+  // Only navigate when nothing is running on this instance; a running job keeps its own chat open.
+  if (!holder && page.url() !== job.chatUrl) await page.goto(job.chatUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 })
+  await page.waitForTimeout(holder ? 0 : 2500)
+  const r = await readLastReply(page)
+  return { text: r.text, hasVideo: r.hasVideo, instanceName: job.instanceName || `instance ${job.instanceId}`, sentAt: job.sentAt, status: job.status }
+}
+
+function applyAction(job: RenderJob, action: JobAction, instId?: number): void {
+  const name = job.instanceName || (instId != null ? `instance ${instId}` : 'its Dola account')
+  if (action === 'cancel') {
+    patch(job, { status: 'cancelled', endedAt: new Date().toISOString(), note: undefined })
+    emitLog('info', `Render cancelled: "${job.title}"`)
+  } else {
+    const tried = action === 'move' && instId != null ? [...new Set([...job.tried, instId])] : job.tried
+    patch(job, { status: 'queued', attempts: 0, tried, error: undefined, endedAt: undefined, chatUrl: undefined, sentAt: undefined, instanceId: undefined, instanceName: undefined,
+      note: action === 'move' ? `Moved off ${name}; waiting for another account` : 'Re-rendering from scratch' })
+    emitLog('info', action === 'move' ? `"${job.title}" moved off ${name} — sending it to another account.` : `Re-rendering "${job.title}" from scratch.`)
+  }
+  pump()
+}
+
+/**
+ * Act on a sent job after a Check: re-render from scratch, move it to another account, or
+ * cancel it. cooldownMinutes > 0 also rests the job's current account so new renders skip it.
+ * A running job is interrupted first (its wait stops at the next poll), then the action applies.
+ */
+export function actOnJob(jobId: string, action: JobAction, cooldownMinutes = 0): void {
+  const job = getJob(jobId)
+  if (!job) return
+  const instId = job.instanceId
+  if (cooldownMinutes > 0 && instId != null) {
+    setCooldown(instId, Date.now() + cooldownMinutes * 60_000)
+    emitLog('info', `${job.instanceName || `Instance ${instId}`} is cooling down for ${cooldownMinutes >= 60 ? `${Math.round(cooldownMinutes / 60)} h` : `${cooldownMinutes} min`} — new renders will skip it.`)
+  }
+  const running = instId != null && activeJob.get(instId) === job.id
+  if (running) {
+    pendingAction.set(job.id, action)
+    cancelFlags.set(job.id, true)
+    // A frozen Dola page never reaches the next cancel check — release it by force after a minute.
+    const token = runTokens.get(job.id)
+    setTimeout(() => {
+      if (instId == null || runTokens.get(job.id) !== token || activeJob.get(instId) !== job.id) return
+      runTokens.delete(job.id); activeInstances.delete(instId); activeJob.delete(instId); cancelFlags.delete(job.id); pendingAction.delete(job.id)
+      forget(instId)
+      emitLog('warn', `${job.instanceName || `Instance ${instId}`} did not respond — released "${job.title}" by force.`)
+      applyAction(job, action, instId)
+    }, 60_000).unref?.()
+    patch(job, { note: action === 'cancel' ? 'Cancelling…' : action === 'move' ? 'Stopping here to move it…' : 'Stopping to re-render…' })
+    return
+  }
+  if (job.status === 'done') return
+  applyAction(job, action, instId)
+}
+
+/** Clear a cooldown early (Renders → instances). */
+export function clearCooldown(id: number): void { cooldown.delete(id); setCooldown(id, 0); save(); pump() }
+
 export function remove(jobId: string): void {
   const job = jobs.find((j) => j.id === jobId)
   if (!job || !TERMINAL.has(job.status)) return
@@ -297,9 +385,15 @@ async function pump(): Promise<void> {
           continue
         }
         activeInstances.add(inst.id)
+        activeJob.set(inst.id, job.id)
+        const token = ++tokenSeq
+        runTokens.set(job.id, token)
         // Reserve the daily-cap slot now so one pump pass can't overshoot the cap.
         patch(job, { status: 'starting', note: undefined, instanceId: inst.id, instanceName: inst.name, sentAt: job.sentAt ?? new Date().toISOString() })
-        runJob(job, inst).finally(() => { activeInstances.delete(inst.id); cancelFlags.delete(job.id); pump() })
+        runJob(job, inst, token).finally(() => {
+          if (runTokens.get(job.id) === token) { runTokens.delete(job.id); activeInstances.delete(inst.id); activeJob.delete(inst.id); cancelFlags.delete(job.id); pendingAction.delete(job.id) }
+          pump()
+        })
       }
     } while (repump)
   } finally {
@@ -307,7 +401,10 @@ async function pump(): Promise<void> {
   }
 }
 
-async function runJob(job: RenderJob, inst: { id: number; name: string; isInitialized: boolean }): Promise<void> {
+async function runJob(job: RenderJob, inst: { id: number; name: string; isInitialized: boolean }, token: number): Promise<void> {
+  const stale = (): boolean => runTokens.get(job.id) !== token
+  /** patch() for this run only: a released (stale) run stops here instead of overwriting the job. */
+  const own = (p: Partial<RenderJob>): void => { if (stale()) throw new Cancelled(); patch(job, p) }
   const cfg = getConfig().render
   const cancelled = (): boolean => cancelFlags.get(job.id) === true
   job.attempts++
@@ -320,45 +417,46 @@ async function runJob(job: RenderJob, inst: { id: number; name: string; isInitia
     const { page } = await getPage(inst.id)
 
     if (!resuming) {
-      patch(job, { status: 'sending' })
+      own({ status: 'sending' })
       // Captured at send time (not queue time), so edits in Settings apply to anything still waiting.
       let references = ''
       if (job.useReferences ?? cfg.referenceImages) {
         try { references = await resolveReferences(job) } catch (e: any) { emitLog('warn', `Reference images skipped for "${job.title}": ${e?.message || e}`) }
       }
-      patch(job, { instructions: cfg.extraInstructions?.trim() || undefined, references: references || undefined })
+      own({ instructions: cfg.extraInstructions?.trim() || undefined, references: references || undefined })
       // Only the instance DolaMultiBrowser has on screen is drawn, so typing is one job at a time:
       // show this instance, type, send (and ride out "high demand"), then hand the screen on.
-      patch(job, { note: 'Waiting for its turn on screen' })
+      own({ note: 'Waiting for its turn on screen' })
       const sent = await withScreen(async () => {
         if (cancelled()) throw new Cancelled()
-        patch(job, { note: undefined })
+        own({ note: undefined })
         emitLog('step', `Sending "${job.title}" to Dola on ${inst.name}…`)
         await showInstance(inst.id)
         if (!(await waitUntilDrawn(page))) throw new Error(`${inst.name} is not being drawn on screen in DolaMultiBrowser, so its chat box can't be typed into. Is DolaMultiBrowser minimised?`)
         await fillVideoPrompt(page, { prompt: job.prompt, model: cfg.model, duration: cfg.duration, aspect: cfg.aspect, instructions: job.instructions, references: job.references })
         return sendAndHandleBusy(page, cancelled)
       })
-      patch(job, { chatUrl: sent.url })
+      own({ chatUrl: sent.url })
       pageFailuresInARow = 0 // the page worked
+      if (stale()) throw new Cancelled()
       if (sent.status === 'no_credits') { onNoCredits(job, inst, sent.credits || { text: '' }); return }
       if (sent.status === 'still_busy') {
-        cooldown.set(inst.id, Date.now() + BUSY_COOLDOWN_MS)
+        setCooldown(inst.id, Date.now() + BUSY_COOLDOWN_MS)
         const tried = [...job.tried, inst.id]
         if (job.attempts < MAX_ATTEMPTS) {
           emitLog('warn', `${inst.name} stayed on "high demand" — cooling it down 30 min, retrying "${job.title}" on another instance.`)
-          patch(job, { status: 'queued', tried, chatUrl: undefined, sentAt: undefined, instanceId: undefined, instanceName: undefined, note: `${inst.name} was busy; retrying elsewhere` })
+          own({ status: 'queued', tried, chatUrl: undefined, sentAt: undefined, instanceId: undefined, instanceName: undefined, note: `${inst.name} was busy; retrying elsewhere` })
           return
         }
         throw new Error(`Dola stayed on "high demand" (last tried ${inst.name}).`)
       }
     }
 
-    patch(job, { status: 'generating', note: undefined })
+    own({ status: 'generating', note: undefined })
     emitLog('info', `Dola is generating "${job.title}" on ${inst.name} (usually 10–15 min)…`)
     const apis = await waitForVideo(page, { chatUrl: job.chatUrl, waitMinutes: cfg.waitMinutes, cancel: cancelled })
 
-    patch(job, { status: 'downloading' })
+    own({ status: 'downloading' })
     const v = await resolveFallbackApi(apis[apis.length - 1])
     // Local time, so filenames match the clock the user sees (toISOString would be UTC).
     const d = new Date(), p2 = (n: number): string => String(n).padStart(2, '0')
@@ -371,13 +469,16 @@ async function runJob(job: RenderJob, inst: { id: number; name: string; isInitia
       instance: inst.name, chatUrl: job.chatUrl, width: v.width, height: v.height, bytes,
       submitted: job.createdAt, saved: new Date().toISOString(),
     }, null, 2))
-    patch(job, { status: 'done', file, bytes, width: v.width, height: v.height, endedAt: new Date().toISOString(), note: undefined })
+    own({ status: 'done', file, bytes, width: v.width, height: v.height, endedAt: new Date().toISOString(), note: undefined })
     emitLog('ok', `Video saved: ${path.basename(file)} (${(bytes / 1e6).toFixed(1)} MB)`)
     notify('renderDone', 'Render ready for review', job.title, 'review')
     try { onRenderDone(job) } catch { /* the pre-check is optional */ }
   } catch (e: any) {
+    if (stale()) return // released by a forced Check action — the job has already moved on
     if (e instanceof NoCreditsError) { onNoCredits(job, inst, e.info); return }
     if (e instanceof Cancelled) {
+      const action = pendingAction.get(job.id)
+      if (action) { pendingAction.delete(job.id); cancelFlags.delete(job.id); applyAction(job, action, inst.id); return }
       patch(job, { status: 'cancelled', endedAt: new Date().toISOString(), note: undefined })
       emitLog('info', `Render cancelled: "${job.title}"`)
       return

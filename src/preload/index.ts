@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { BrainstormIdea } from '../shared/brainstorm'
+import type { RenderCheckResult } from '../shared/renderCheck'
 import type {
   AppConfig, Entry, GenerateRequest, GenerateResult, LearningLogEntry, CliTestResult, LogLine, SavedConcept, RenderJob, RenderOverview, ReviewVerdict, UsageRow,
 } from '../shared/types'
@@ -44,6 +45,11 @@ const api = {
   /** opts.references overrides Settings → Render → reference images for these renders. */
   renderSubmit: (entryIds: number[], opts?: { references?: boolean }): Promise<RenderJob[]> => ipcRenderer.invoke('render:submit', entryIds, opts),
   renderCancel: (jobId: string): Promise<boolean> => ipcRenderer.invoke('render:cancel', jobId),
+  /** Read the job's latest Dola reply and have a cheap model explain it. */
+  renderCheck: (jobId: string): Promise<RenderCheckResult> => ipcRenderer.invoke('render:check', jobId),
+  /** After a Check: re-render, move to another account, or cancel; cooldownMinutes rests its current account. */
+  renderAct: (jobId: string, action: 'rerender' | 'move' | 'cancel', cooldownMinutes?: number): Promise<boolean> => ipcRenderer.invoke('render:act', jobId, action, cooldownMinutes),
+  renderClearCooldown: (id: number): Promise<boolean> => ipcRenderer.invoke('render:clearCooldown', id),
   /** fresh=false re-checks the job's existing Dola chat; fresh=true renders again from scratch. */
   renderRetry: (jobId: string, fresh: boolean): Promise<boolean> => ipcRenderer.invoke('render:retry', { jobId, fresh }),
   renderRemove: (jobId: string): Promise<boolean> => ipcRenderer.invoke('render:remove', jobId),

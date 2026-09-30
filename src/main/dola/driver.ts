@@ -273,6 +273,18 @@ async function captureFallbackApis(page: Page, chatUrl?: string): Promise<string
   return apis
 }
 
+/** Livery Studio "Check": the last reply's text and whether it holds a video, with a hard timeout so a frozen page can't hang the check. */
+export async function readLastReply(page: Page, timeoutMs = 15_000): Promise<{ text: string; hasVideo: boolean; replies: number }> {
+  const read = page.evaluate((sel) => {
+    const all = document.querySelectorAll(sel)
+    const r = all[all.length - 1] as HTMLElement | undefined
+    return { text: r ? r.innerText.trim() : '', hasVideo: !!r?.querySelector('video'), replies: all.length }
+  }, SEL.reply)
+  let timer: NodeJS.Timeout | undefined
+  const timeout = new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error(`The Dola page did not answer within ${Math.round(timeoutMs / 1000)}s — it may be frozen or minimised.`)), timeoutMs) })
+  try { return await Promise.race([read, timeout]) } finally { clearTimeout(timer) }
+}
+
 const lastReplyHasVideo = (page: Page): Promise<boolean> => page.evaluate((sel) => {
   const all = document.querySelectorAll(sel)
   return !!all[all.length - 1]?.querySelector('video')
