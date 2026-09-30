@@ -53,6 +53,8 @@ const api = {
     return () => { ipcRenderer.removeListener('render:changed', handler) }
   },
   importFromLab: (): Promise<{ imported: string[]; from: string }> => ipcRenderer.invoke('brain:importLab'),
+  /** Re-read history and pull in prompts created in Livery Lab since the import (append-only). */
+  refreshHistory: (): Promise<{ history: Entry[]; added: number }> => ipcRenderer.invoke('history:refresh'),
   getLabDataDir: (): Promise<string> => ipcRenderer.invoke('brain:labDir'),
   /** Subscribe to real-time activity log lines. Returns an unsubscribe fn. */
   onLog: (cb: (line: LogLine) => void): (() => void) => {

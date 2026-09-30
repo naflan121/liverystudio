@@ -456,7 +456,8 @@ export function App() {
   }
 
   if (view === 'renders') {
-    return <Renders entries={history} jobs={renderJobs} onOpenEntry={(h) => { openEntry(h); setView('lab') }} onClose={() => setView('lab')} />
+    return <Renders entries={history} jobs={renderJobs} onOpenEntry={(h) => { openEntry(h); setView('lab') }} onClose={() => setView('lab')}
+      onRefresh={async () => { const r = await window.api.refreshHistory(); setHistory(r.history); return r.added }} />
   }
 
   if (view === 'history') {

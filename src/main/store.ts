@@ -213,6 +213,23 @@ export function getHistory(): Entry[] {
   return readJsonRecoverable<Entry[]>(p('history.json'), (v) => Array.isArray(v), [])
 }
 
+/**
+ * Pull prompts created in Livery Lab since the import: any Lab entry whose id the
+ * Studio doesn't have is added. Append-only — Studio entries are never replaced
+ * (they may have been scored differently here) and the Lab's file is only read.
+ */
+export function pullNewFromLab(): { history: Entry[]; added: number } {
+  const current = getHistory()
+  const lab = readJsonRecoverable<Entry[]>(path.join(liveryLabDataDir(), 'history.json'), (v) => Array.isArray(v), [])
+  const have = new Set(current.map((h) => h.id))
+  const fresh = lab.filter((h) => h && typeof h.id === 'number' && !have.has(h.id))
+  if (!fresh.length) return { history: current, added: 0 }
+  // Entry ids are Date.now() timestamps, so sorting by id keeps history newest-first.
+  const merged = [...fresh, ...current].sort((a, b) => b.id - a.id)
+  setHistory(merged)
+  return { history: getHistory(), added: fresh.length }
+}
+
 export function setHistory(entries: Entry[]): void {
   const file = p('history.json')
   backup(file)

@@ -6,7 +6,7 @@ import { callClaude, testCli } from './claude'
 import {
   getConfig, setConfig, getHistory, setHistory, getPlaybook, setPlaybook,
   getPlaybookVersions, appendLearningLog, getLearningLog, resetMemory, dataDir, setDataDir,
-  getTrends, setTrends, getSavedConcepts, setSavedConcepts, importFromLiveryLab, liveryLabDataDir,
+  getTrends, setTrends, getSavedConcepts, setSavedConcepts, importFromLiveryLab, liveryLabDataDir, pullNewFromLab,
 } from './store'
 import { initRenderQueue, overview as renderOverview, submit as renderSubmit, cancel as renderCancel, retry as renderRetry, remove as renderRemove, listJobs } from './render'
 import { SYSTEM, TITLE_SYSTEM, LEARN_SYSTEM, EXTRACT_SYSTEM, TREND_SYSTEM, CAPTION_SYSTEM, CONCEPT_SYSTEM, LONG_PROMPT_CHARS, buildUserMessage, titleMsg, captionMsg, buildLearnMessage, buildRedistillMessage, buildConceptMessage, extractMsg, parseScene, parseConcept, trendsMsg, parseVariants } from '../shared/prompts'
@@ -498,6 +498,11 @@ function registerIpc(): void {
     return r
   })
   ipcMain.handle('brain:labDir', () => liveryLabDataDir())
+  ipcMain.handle('history:refresh', () => {
+    const r = pullNewFromLab()
+    emitLog(r.added ? 'ok' : 'info', r.added ? `Pulled ${r.added} new prompt(s) from Livery Lab.` : 'History refreshed — no new prompts in Livery Lab.')
+    return r
+  })
 
   ipcMain.handle('concepts:get', () => getSavedConcepts())
   ipcMain.handle('concepts:save', (_e, payload: { label: string; brief: string; sourceEntryId?: number }) => {

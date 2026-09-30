@@ -105,12 +105,26 @@ export function RenderStrip({ entry, job }: { entry: Entry; job?: RenderJob }) {
   )
 }
 
-export function Renders({ entries, jobs, onOpenEntry, onClose }: {
+export function Renders({ entries, jobs, onOpenEntry, onClose, onRefresh }: {
   entries: Entry[]
   jobs: RenderJob[]
   onOpenEntry: (h: Entry) => void
   onClose: () => void
+  /** Re-read history (incl. new Livery Lab prompts); resolves to how many were added. */
+  onRefresh: () => Promise<number>
 }) {
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshMsg, setRefreshMsg] = useState('')
+  async function refresh(): Promise<void> {
+    setRefreshing(true); setRefreshMsg('')
+    try {
+      const added = await onRefresh()
+      setRefreshMsg(added ? `+${added} new from Livery Lab` : 'Up to date')
+    } catch { setRefreshMsg('Refresh failed') } finally {
+      setRefreshing(false)
+      setTimeout(() => setRefreshMsg(''), 4000)
+    }
+  }
   const [ov, setOv] = useState<RenderOverview | null>(null)
   const [picked, setPicked] = useState<number[]>([])
   const [filter, setFilter] = useState<'active' | 'done' | 'all'>('active')
@@ -204,6 +218,10 @@ export function Renders({ entries, jobs, onOpenEntry, onClose }: {
                 <input type="checkbox" checked={showOld} onChange={(e) => { setShowOld(e.target.checked); setPicked([]) }} style={{ accentColor: ACCENT }} /> include older than 14 days
               </label>
             </div>
+            <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              {refreshMsg && <span style={{ fontSize: 12, color: refreshMsg.startsWith('+') ? GOOD : MUTE }}>{refreshMsg}</span>}
+              <button onClick={refresh} disabled={refreshing} title="Reload the prompt list and pull in prompts created in Livery Lab" style={{ ...small, opacity: refreshing ? 0.6 : 1 }}>{refreshing ? 'Refreshing…' : '↻ Refresh'}</button>
+            </span>
             {unrendered.length > 0 && (
               <span style={{ display: 'flex', gap: 6 }}>
                 <button onClick={() => setPicked(picked.length === unrendered.length ? [] : unrendered.map((e) => e.id))} style={small}>{picked.length === unrendered.length ? 'Select none' : 'Select all'}</button>
