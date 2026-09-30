@@ -2,7 +2,41 @@
 
 Guidance for Claude Code when working in this repository.
 
-## What this is
+## Livery Studio (this repo) vs Livery Lab
+
+**Livery Studio** is a fork of Livery Lab (`C:\xampp\htdocs\prompt-engine`,
+cloned 2026-09-30 from its `feedback-brain` branch; git remote `lab`, push
+disabled). The Lab keeps running untouched; the Studio extends it into one tool
+for the whole pipeline. **The brain is the brain**: `shared/prompts.ts`,
+`shared/brain.ts`, the playbook/learn loop and the `Entry` shape stay as in the
+Lab, so brain fixes can be cherry-picked across (`git fetch lab`).
+
+Pipeline roadmap:
+
+1. **Render** (done): prompt -> Dola (Seedance 2.5) via DolaMultiBrowser ->
+   watermark-free MP4. `main/dola/*` is a TS port of
+   `C:\Users\User\Documents\FangyueBrowser-Fork\mcp\dola-mcp` (keep selectors in
+   step with it). `main/render.ts` = persistent queue (`renders.json`, main-owned),
+   daily cap, parallelism, busy cooldown, resume-after-restart via the saved chat URL.
+   UI: `renderer/src/Renders.tsx` (+ `RenderStrip` on the lab result), Settings → Render.
+2. **Review**: AI pre-check of each render (frame analysis) + approve/reject with
+   reason tags; rejections feed a fast "render failures" learning loop.
+3. **Plan**: port AeroPost Pro's slot scoring (`C:\xampp\htdocs\aviation-posting-pro\js\core.js`)
+   and have the AI build a posting timetable + per-platform captions for approved clips.
+   Posting stays manual (Facebook Page + YouTube).
+4. **Publish/measure**: YouTube Data API + Facebook Graph API (Page) scheduled
+   uploads and automatic view pulls into scoring.
+
+Data: the Studio has its own userData (`%APPDATA%\Livery Studio`). On first run
+`importFromLiveryLab()` (store.ts) **copies** the Lab's brain files from wherever the
+Lab's `location.json` points (the Google Drive memory folder); the Lab's files are
+never written. `setDataDir` refuses the Lab's folder.
+
+**Keep render/review/schedule state out of `history.json`.** The renderer rewrites
+history wholesale on every save, so anything the main process updates in the
+background lives in its own main-owned file (like `renders.json`) keyed by entry id.
+
+## What the brain is (inherited from Livery Lab)
 
 **Livery Lab** — a self-learning Electron desktop app that generates
 **Seedance 2.0 image-to-video prompts** for RC scale-model aircraft videos,
@@ -183,8 +217,6 @@ There is **no test suite** and no linter script wired. Verify changes with
 
 ## Repo location note
 
-This git repo lives at `C:\xampp\htdocs\prompt-engine` (also the Google Drive
-source-of-record). Per `README.md`, the intended **dev/build working copy** is a
-local, non-Drive folder (`C:\Users\User\LiveryLab`) because `node_modules` cannot
-live on Drive. If `npm install`/`npm run dev` behave oddly here, that's why —
-confirm with the user which copy they're running.
+This repo lives at `C:\xampp\htdocs\livery-studio` (local disk, so `node_modules`
+works here) — run it with `npm run dev`. The Lab's repo is
+`C:\xampp\htdocs\prompt-engine`; leave it alone unless asked.
