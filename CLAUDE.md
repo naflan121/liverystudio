@@ -88,6 +88,17 @@ advisory verdict on `job.precheck`; reviews record it (`reviews.precheck`) for t
 agreement stat. Usage rows carry `provider`; `ai.minimax.dailyTokenLimit` caps MiniMax.
 MiniMax is NOT used for video generation (user decision).
 
+**Variety + Concept brainstorm (Studio-side, prompts.ts untouched).** `shared/variety.ts`
+reads setting · camera · light from each prompt's Visual section with keyword rules (no AI
+call) and `withVariety()` in index.ts appends a short "VARIETY CHECK" to generate /
+candidates: what this lineup already used (`req.batchUsed`, filled by `runLineup`), the
+last 6 clips, and anything overused in the last 20 (4+ and 40%+). Context only — the model
+still chooses; levers are never dealt out (user decision). Skipped for ramp_glide /
+cliff_drop. `shared/brainstorm.ts` + IPC `concept:brainstorm`: N ranked concepts in ONE
+call on the learning model; proven formats are passed as real numbers (3+ scored clips)
+and an idea may only borrow from one the data backs (`BORROWS:` line). UI: "🧠 Brainstorm
+concepts" (lab/Ideas.tsx) and the lineup Mix "Fresh concepts" (one brainstorm per lineup).
+
 ## What the brain is (inherited from Livery Lab)
 
 **Livery Lab** — a self-learning Electron desktop app that generates

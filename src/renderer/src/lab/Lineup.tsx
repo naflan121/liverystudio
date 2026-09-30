@@ -60,12 +60,13 @@ export function LineupPanel({ lab, config, history, capLeft, dailyCap }: {
               <div style={lbl}>Mix</div>
               <select value={mix} onChange={(e) => setMix(e.target.value)} style={sel}>
                 <option value="random">Random mix — weighted by what works ({exploreLabel})</option>
+                <option value="fresh">Fresh concepts — brainstorm new ones (one extra call)</option>
                 {groupScenarios().map(([group, items]) => group === ''
                   ? items.filter((s) => s.id !== 'random').map((s) => <option key={s.id} value={s.id}>All: {s.label}</option>)
                   : <optgroup key={group} label={group}>{items.map((s) => <option key={s.id} value={s.id}>All: {s.label}</option>)}</optgroup>)}
                 {savedConcepts.length > 0 && <optgroup label="AI Concepts (saved)">{savedConcepts.map((c) => <option key={c.id} value={`concept:${c.id}`}>All: {c.label}</option>)}</optgroup>}
               </select>
-              <div style={{ fontSize: 11.5, color: MUTE, marginTop: 4 }}>Random uses the Exploration slider: proven formats most, a few experiments.</div>
+              <div style={{ fontSize: 11.5, color: MUTE, marginTop: 4 }}>{mix === 'fresh' ? `One brainstorm on the learning model invents ${Math.min(count, 8)} new concept${Math.min(count, 8) === 1 ? '' : 's'}${count > 8 ? ', reused in turn' : ''} — each prompt gets one.` : 'Random uses the Exploration slider: proven formats most, a few experiments.'}</div>
             </div>
           </div>
           <div>

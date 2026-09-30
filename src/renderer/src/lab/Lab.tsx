@@ -10,6 +10,7 @@ import { CopyBtn, statusMeta, ago } from './common'
 import { hasSnippet, toggleSnippet } from '@shared/snippets'
 import type { LabState } from './useLab'
 import { LineupPanel } from './Lineup'
+import { IdeasPanel } from './Ideas'
 
 export function Lab({ lab, config, history, playbook, latestRender, capLeft, dailyCap }: {
   capLeft: number | null
@@ -20,7 +21,7 @@ export function Lab({ lab, config, history, playbook, latestRender, capLeft, dai
   playbook: string
   latestRender: Map<number, RenderJob>
 }) {
-  const { lineupOpen, setLineupOpen, lineup } = lab
+  const { lineupOpen, setLineupOpen, lineup, ideasOpen, brainstorm, brainstorming } = lab
   const { scenario, setScenario, aircraft, setAircraft, crowd, setCrowd, env, setEnv, camera, setCamera, hook, setHook, multiShot, setMultiShot, punchyOpen, setPunchyOpen, region, setRegion, varyCoverage, setVaryCoverage, useTrends, setUseTrends, boost, setBoost, longPrompt, setLongPrompt, candidateMode, setCandidateMode, candidates, setCandidates, nudge, setNudge, explore, setExplore, savedConcepts, setSavedConcepts, conceptLoading, setConceptLoading, loading, setLoading, learnCount, setLearnCount, error, setError, current, setCurrent, pickedTags, setPickedTags, comment, setComment, reachDraft, setReachDraft, viewsDraft, setViewsDraft, excludeCoverage, setExcludeCoverage, toast, setToast, captioning, setCaptioning, showLearn, setShowLearn, learning, toastTimer, flashToast, brainInsights, rated, tierCount, hookTries, hookStrong, toscoreCount, generateRef, count, charLimit, over, sections, cur, doLearn, buildEntry, buildReq, resetScoringDraft, startNew, conceptScenario, resolveScenario, autoRender, generateFrom, generate, surpriseConcept, saveThisConcept, remixWinner, chooseCandidate, openEntry, updateEntry, submitScore, patchCurrent, titleAvoidList, regenerateTitle, writeCaption } = lab
   const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform)
   const runHint = isMac ? '⌘↵' : 'Ctrl+↵'
@@ -74,6 +75,7 @@ export function Lab({ lab, config, history, playbook, latestRender, capLeft, dai
                 )}
               </select>
               <button onClick={surpriseConcept} disabled={conceptLoading} title="Ask the model to invent a brand-new one-off concept and generate from it" style={{ ...ghostBtn, marginTop: 8, width: '100%', opacity: conceptLoading ? 0.6 : 1 }}>{conceptLoading ? 'Inventing…' : '💡 Surprise concept'}</button>
+              <button onClick={() => brainstorm(5)} disabled={brainstorming} title="Think harder: 5 ranked, genuinely different concepts from one call on the learning model" style={{ ...ghostBtn, marginTop: 6, width: '100%', opacity: brainstorming ? 0.6 : 1 }}>{brainstorming ? 'Brainstorming…' : '🧠 Brainstorm concepts'}</button>
             </div>
 
             <div><div style={lbl}>Aircraft</div><select value={aircraft} onChange={(e) => setAircraft(e.target.value)} style={sel}>{AIRCRAFT.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}</select></div>
@@ -175,6 +177,7 @@ export function Lab({ lab, config, history, playbook, latestRender, capLeft, dai
 
           {/* RIGHT — live result + scoring */}
           <div style={{ display: 'grid', gap: 14 }}>
+            {ideasOpen && <IdeasPanel lab={lab} />}
             {(lineupOpen || lineup?.running) && <LineupPanel lab={lab} config={config} history={history} capLeft={capLeft} dailyCap={dailyCap} />}
             {loading ? (
               <div style={{ border: `1px solid ${LINE}`, borderRadius: 14, padding: '54px 28px', textAlign: 'center', background: PAPER, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>

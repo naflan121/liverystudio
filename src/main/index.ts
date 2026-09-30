@@ -14,6 +14,8 @@ import {
 import { closeDb, reviewStatsByScenario, rejectReasonCounts, getEntry as getEntryById, insertUsage, usageSummary, precheckAgreement } from './db'
 import { initReview, decide as reviewDecide, undo as reviewUndo, rewriteAndRender, rerender, markUnusable } from './review'
 import { renderLessonsBlock } from '../shared/review'
+import { varietyNote } from '../shared/variety'
+import { BRAINSTORM_SYSTEM, buildBrainstormMessage, parseBrainstorm, formatEvidence, triedConceptList } from '../shared/brainstorm'
 import { buildReferenceBlock, fillImage1 } from '../shared/references'
 import { initRenderQueue, overview as renderOverview, submit as renderSubmit, cancel as renderCancel, retry as renderRetry, remove as renderRemove, listJobs, updateJob, pauseQueue, resumeQueue, setOnRenderDone, clearCredits } from './render'
 import { SYSTEM, TITLE_SYSTEM, LEARN_SYSTEM, EXTRACT_SYSTEM, TREND_SYSTEM, CAPTION_SYSTEM, CONCEPT_SYSTEM, longLimit, buildUserMessage, titleMsg, captionMsg, buildLearnMessage, buildRedistillMessage, buildConceptMessage, extractMsg, parseScene, parseConcept, trendsMsg, parseVariants } from '../shared/prompts'
@@ -254,6 +256,16 @@ function withRenderLessons(message: string): string {
   return message + renderLessonsBlock(lessons)
 }
 
+// Livery Studio: what setting/camera/light were already used (this lineup, the last
+// few clips, overused lately) so the model's own choices don't converge. Keyword-based,
+// no extra AI call. Skipped for scenarios that lock their own scene.
+function withVariety(message: string, req: GenerateRequest, history: Entry[]): string {
+  if (req.resolved.id === 'ramp_glide' || req.resolved.id === 'cliff_drop') return message
+  const note = varietyNote(history, { batchUsed: req.batchUsed, envOpen: req.env === 'auto', cameraOpen: !req.camera || req.camera === 'auto' })
+  if (note) emitLog('info', `Variety check attached${req.batchUsed?.length ? ` (${req.batchUsed.length} earlier in this lineup)` : ''}.`)
+  return message + note
+}
+
 function registerIpc(): void {
   ipcMain.handle('config:get', () => getConfig())
   ipcMain.handle('config:set', (_e, patch) => setConfig(patch))
@@ -328,7 +340,7 @@ function registerIpc(): void {
     const charLimit = req.longPrompt ? longLimit(req) : (req.resolved.charBudget || cfg.charLimit)
     const rewriteTarget = req.longPrompt ? longLimit(req) : (req.resolved.charBudget || cfg.targetMax)
 
-    let text = await gen(withRenderLessons(buildUserMessage(req, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends, avoidLines, avoidRecent)), 'prompt')
+    let text = await gen(withVariety(withRenderLessons(buildUserMessage(req, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends, avoidLines, avoidRecent)), req, history), 'prompt')
     if (text.length > charLimit) {
       emitLog('warn', `Over limit (${text.length} > ${charLimit}) — asking for a tighter rewrite`)
       text = await gen(
@@ -374,7 +386,7 @@ function registerIpc(): void {
     const avoidEnvs = req.varyCoverage && (req.env === 'auto' || req.resolved.id === 'cliff_drop') ? recentEnvs(history, req.resolved.id) : []
     const avoidLines = req.resolved.id === 'ramp_glide' ? recentAnnouncerLines(history) : []
     const trends = req.useTrends ? getTrends().text : ''
-    const raw = await callModel(cfg.generationModel, withRenderLessons(buildUserMessage({ ...req, candidates: n }, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends, avoidLines, avoidRecent)), { system: SYSTEM, label: 'candidates', timeoutMs: Math.max(cfg.timeoutMs, 240000) })
+    const raw = await callModel(cfg.generationModel, withVariety(withRenderLessons(buildUserMessage({ ...req, candidates: n }, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends, avoidLines, avoidRecent)), req, history), { system: SYSTEM, label: 'candidates', timeoutMs: Math.max(cfg.timeoutMs, 240000) })
     const batchLimit = req.longPrompt ? longLimit(req) : (req.resolved.charBudget || cfg.charLimit)
     const variants = parseVariants(raw).slice(0, n)
     for (const v of variants) {
@@ -539,6 +551,22 @@ function registerIpc(): void {
     emitLog('ok', `Concept ready: "${concept.label}"`)
     return concept
   }))
+  // Concept brainstorm: N ranked, genuinely different concepts from ONE call on the
+  // learning model. Proven formats are passed as real numbers (3+ scored clips), so
+  // the model may only lean on what the data backs.
+  ipcMain.handle('concept:brainstorm', (_e, n: number) => exclusive(async () => {
+    const cfg = getConfig()
+    const count = Math.min(Math.max(Math.round(n) || 5, 2), 8)
+    const history = getHistory()
+    emitLog('step', `Brainstorming ${count} fresh concepts…`)
+    const msg = buildBrainstormMessage(count, getPlaybook(), formatEvidence(history), triedConceptList(history, getSavedConcepts()), getTrends().text)
+    const raw = await callModel(cfg.learningModel, msg, { system: BRAINSTORM_SYSTEM, label: 'brainstorm', timeoutMs: Math.max(cfg.timeoutMs, 240000) })
+    const ideas = parseBrainstorm(raw).slice(0, count)
+    if (!ideas.length) throw new Error('The brainstorm came back in an unexpected format — try again.')
+    emitLog('ok', `${ideas.length} concept(s) ready: ${ideas.map((i) => `"${i.label}"`).join(', ')}`)
+    return ideas
+  }))
+
   // --- Livery Studio: render pipeline (Dola / Seedance) ---------------------------
   ipcMain.handle('render:overview', () => renderOverview())
   ipcMain.handle('render:pause', () => { pauseQueue('Paused by you.', false); return true })

@@ -106,6 +106,8 @@ export interface GenerateRequest {
   nudge: string
   /** Skip the SEO-title step for this call (candidate mode generates the title only for the chosen one). */
   skipTitle?: boolean
+  /** Livery Studio: scene labels (setting · camera · light) already written earlier in this lineup — variety context. */
+  batchUsed?: string[]
 }
 
 export interface GenerateResult {

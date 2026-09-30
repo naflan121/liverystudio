@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { SCENARIOS, pickRandomScenario } from '@shared/domain'
 import { toFilename, splitSections, parseViews } from '@shared/util'
 import { topInsights } from '@shared/brain'
+import { sceneTags, sceneLabel } from '@shared/variety'
+import { ideaBrief, type BrainstormIdea } from '@shared/brainstorm'
 import type { AppConfig, Entry, ReachId, Scenario, SavedConcept } from '@shared/types'
 
 export function useLab({ config, history, persist, setPlaybook }: {
@@ -352,17 +354,31 @@ export function useLab({ config, history, persist, setPlaybook }: {
       setLineup({ ...run })
     }
     setLineup({ ...run })
+    // "Fresh concepts": ONE brainstorm call for the whole lineup (up to 8 ideas, reused in turn).
+    let fresh: BrainstormIdea[] = []
+    if (o.scenarioId === 'fresh') {
+      try { fresh = await window.api.brainstormConcepts(Math.min(o.count, 8)) } catch (e: any) {
+        for (let k = 0; k < o.count; k++) update(k, { status: 'failed', error: 'Brainstorm failed: ' + String(e?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '').slice(0, 160) })
+        run.running = false; setLineup({ ...run }); return
+      }
+    }
+    const used: string[] = [] // setting · camera · light of each prompt written so far — variety context for the next
+    const stamp = Date.now()
     for (let i = 0; i < o.count; i++) {
       if (lineupStop.current) { for (let k = i; k < o.count; k++) update(k, { status: 'skipped' }); break }
-      const resolved = o.scenarioId === 'random' ? pickRandomScenario(historyRef.current, explore) : resolveScenario(o.scenarioId)
+      const idea = fresh.length ? fresh[i % fresh.length] : null
+      const resolved = idea ? { id: `concept:${stamp + i}`, label: idea.label, group: 'AI Concepts', brief: ideaBrief(idea) }
+        : o.scenarioId === 'random' ? pickRandomScenario(historyRef.current, explore) : resolveScenario(o.scenarioId)
       if (!resolved) { update(i, { status: 'failed', error: 'Scenario not found' }); continue }
       update(i, { status: 'writing', scenario: resolved.label })
       try {
-        const req = { ...buildReq(resolved), nudge: o.direction }
+        const req = { ...buildReq(resolved), nudge: o.direction, batchUsed: [...used] }
         const extra: Partial<Entry> = { nudge: o.direction.trim(), ...(resolved.id.startsWith('concept:') ? { conceptBrief: resolved.brief } : {}) }
         const res = await window.api.generate(req)
         const entry = { ...buildEntry(resolved, res, extra), id: Date.now() }
         persist((prev) => [entry, ...prev])
+        const tag = sceneLabel(sceneTags(res.text))
+        if (tag) used.push(`${resolved.label}: ${tag}`)
         update(i, { status: 'written', title: entry.title || resolved.label, entryId: entry.id })
         if (o.render) {
           // The history write rides IPC; give it a beat before main looks the entry up.
@@ -382,14 +398,35 @@ export function useLab({ config, history, persist, setPlaybook }: {
 
   function stopLineup() { lineupStop.current = true }
 
-  return { lineupOpen, setLineupOpen, lineup, setLineup, runLineup, stopLineup, scenario, setScenario, aircraft, setAircraft, crowd, setCrowd, env, setEnv, camera, setCamera, hook, setHook, multiShot, setMultiShot, punchyOpen, setPunchyOpen, region, setRegion, varyCoverage, setVaryCoverage, useTrends, setUseTrends, boost, setBoost, longPrompt, setLongPrompt, candidateMode, setCandidateMode, candidates, setCandidates, nudge, setNudge, explore, setExplore, savedConcepts, setSavedConcepts, conceptLoading, setConceptLoading, loading, setLoading, learnCount, setLearnCount, error, setError, current, setCurrent, pickedTags, setPickedTags, comment, setComment, reachDraft, setReachDraft, viewsDraft, setViewsDraft, excludeCoverage, setExcludeCoverage, toast, setToast, captioning, setCaptioning, showLearn, setShowLearn, learning, toastTimer, flashToast, brainInsights, rated, tierCount, hookTries, hookStrong, toscoreCount, generateRef, count, charLimit, over, sections, cur, doLearn, buildEntry, buildReq, resetScoringDraft, startNew, conceptScenario, resolveScenario, autoRender, generateFrom, generate, surpriseConcept, saveThisConcept, remixWinner, chooseCandidate, openEntry, updateEntry, submitScore, patchCurrent, titleAvoidList, regenerateTitle, writeCaption }
+  // Concept brainstorm: ranked ideas from one call on the learning model.
+  const [ideas, setIdeas] = useState<BrainstormIdea[]>([])
+  const [brainstorming, setBrainstorming] = useState(false)
+  const [ideasOpen, setIdeasOpen] = useState(false)
+  async function brainstorm(n = 5) {
+    if (brainstorming) return
+    setBrainstorming(true); setIdeasOpen(true); setError('')
+    try { setIdeas(await window.api.brainstormConcepts(n)) } catch (e: any) {
+      setError(e?.message || 'Brainstorm failed. Check Settings → Test connection.')
+    } finally { setBrainstorming(false) }
+  }
+  async function generateIdea(i: BrainstormIdea) {
+    await generateFrom({ id: `concept:${Date.now()}`, label: i.label, group: 'AI Concepts', brief: ideaBrief(i) })
+  }
+  async function saveIdea(i: BrainstormIdea) {
+    const saved = await window.api.saveConcept({ label: i.label, brief: ideaBrief(i) })
+    setSavedConcepts((prev) => [saved, ...prev])
+    setIdeas((prev) => prev.filter((x) => x !== i))
+    flashToast(`Saved "${i.label}" — pick it from Scenario or the lineup Mix ✓`)
+  }
+
+  return { ideas, setIdeas, brainstorming, ideasOpen, setIdeasOpen, brainstorm, generateIdea, saveIdea, lineupOpen, setLineupOpen, lineup, setLineup, runLineup, stopLineup, scenario, setScenario, aircraft, setAircraft, crowd, setCrowd, env, setEnv, camera, setCamera, hook, setHook, multiShot, setMultiShot, punchyOpen, setPunchyOpen, region, setRegion, varyCoverage, setVaryCoverage, useTrends, setUseTrends, boost, setBoost, longPrompt, setLongPrompt, candidateMode, setCandidateMode, candidates, setCandidates, nudge, setNudge, explore, setExplore, savedConcepts, setSavedConcepts, conceptLoading, setConceptLoading, loading, setLoading, learnCount, setLearnCount, error, setError, current, setCurrent, pickedTags, setPickedTags, comment, setComment, reachDraft, setReachDraft, viewsDraft, setViewsDraft, excludeCoverage, setExcludeCoverage, toast, setToast, captioning, setCaptioning, showLearn, setShowLearn, learning, toastTimer, flashToast, brainInsights, rated, tierCount, hookTries, hookStrong, toscoreCount, generateRef, count, charLimit, over, sections, cur, doLearn, buildEntry, buildReq, resetScoringDraft, startNew, conceptScenario, resolveScenario, autoRender, generateFrom, generate, surpriseConcept, saveThisConcept, remixWinner, chooseCandidate, openEntry, updateEntry, submitScore, patchCurrent, titleAvoidList, regenerateTitle, writeCaption }
 }
 
 export type LabState = ReturnType<typeof useLab>
 
 export interface LineupOptions {
   count: number
-  /** 'random' = weighted pick per prompt (Exploration lever), else one scenario id. */
+  /** 'random' = weighted pick per prompt (Exploration lever), 'fresh' = brainstorm new concepts (one call), else one scenario id. */
   scenarioId: string
   /** Optional direction added to every prompt. */
   direction: string

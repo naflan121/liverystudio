@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { BrainstormIdea } from '../shared/brainstorm'
 import type {
   AppConfig, Entry, GenerateRequest, GenerateResult, LearningLogEntry, CliTestResult, LogLine, SavedConcept, RenderJob, RenderOverview, ReviewVerdict, UsageRow,
 } from '../shared/types'
@@ -32,6 +33,8 @@ const api = {
   resetMemory: (): Promise<boolean> => ipcRenderer.invoke('memory:reset'),
   /** Invent a fresh one-off scenario concept (see CONCEPT_SYSTEM in shared/prompts). */
   suggestConcept: (): Promise<{ label: string; brief: string }> => ipcRenderer.invoke('concept:suggest'),
+  /** Livery Studio: N ranked concepts from one call on the learning model (see shared/brainstorm). */
+  brainstormConcepts: (n: number): Promise<BrainstormIdea[]> => ipcRenderer.invoke('concept:brainstorm', n),
   getSavedConcepts: (): Promise<SavedConcept[]> => ipcRenderer.invoke('concepts:get'),
   saveConcept: (payload: { label: string; brief: string; sourceEntryId?: number }): Promise<SavedConcept> => ipcRenderer.invoke('concepts:save', payload),
   deleteConcept: (id: number): Promise<SavedConcept[]> => ipcRenderer.invoke('concepts:delete', id),
