@@ -69,6 +69,20 @@ CLI-reported cost + tokens to the `usage` table (v3). `notify.ts` shows Windows
 toasts per Settings → Notifications. `render.ts` pauses new sends after
 `render.pauseAfterFailures` page failures in a row (state in meta `queue_paused`).
 
+**MiniMax (second engine, `main/minimax.ts`).** Runs MiniMax Code (`mcode exec`, npm
+global `@minimax-ai/code/cli.js`) on the user's MiniMax plan. mcode is a full agent that
+auto-approves tools and loads the user's MCP servers (incl. Dola) — ALWAYS run it with
+`MAVIS_LOCAL_RUNTIME_DISABLE_TOOLS=1` (verified: no tool/Dola/file execution), an empty
+scratch cwd, `--max-steps` and `--timeout`. No system-prompt flag: instructions go at the
+top of the input. `--output-schema` fails on M3 (STRUCTURED_OUTPUT_INVALID) — ask for JSON
+in the prompt and parse it (`precheck.ts` parsePrecheck). Settings → AI & models:
+`ai.routes` picks Claude or MiniMax per task (titles, captions, scene, reference naming —
+`runRoute()` in index.ts); prompt writing + learning always stay on Claude.
+`ai.precheck`: a MiniMax video model (M3) watches each finished render and stores an
+advisory verdict on `job.precheck`; reviews record it (`reviews.precheck`) for the
+agreement stat. Usage rows carry `provider`; `ai.minimax.dailyTokenLimit` caps MiniMax.
+MiniMax is NOT used for video generation (user decision).
+
 ## What the brain is (inherited from Livery Lab)
 
 **Livery Lab** — a self-learning Electron desktop app that generates

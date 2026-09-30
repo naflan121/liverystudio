@@ -13,7 +13,7 @@ import { app } from 'electron'
 import Database from 'better-sqlite3'
 import fs from 'node:fs'
 import path from 'node:path'
-import type { Entry, RenderJob, UsageRow } from '../shared/types'
+import type { Entry, RenderJob, UsageRow, Provider } from '../shared/types'
 
 let db: Database.Database | null = null
 
@@ -71,6 +71,9 @@ const MIGRATIONS: string[] = [
      duration_ms INTEGER NOT NULL DEFAULT 0
    );
    CREATE INDEX usage_day ON usage(day);`,
+  // v4 — which engine a call ran on; the AI pre-check verdict at the time you decided (agreement tracking)
+  `ALTER TABLE usage ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude';
+   ALTER TABLE reviews ADD COLUMN precheck TEXT;`,
 ]
 
 export function dbPath(): string {
@@ -176,9 +179,19 @@ export function syncRenderJobs(jobs: RenderJob[]): void {
 
 // --- reviews ----------------------------------------------------------------------
 
-export function insertReview(r: { jobId: string; entryId: number; verdict: string; reasons: string[]; comment: string; scenarioId?: string; instance?: string; at: string }): void {
-  getDb().prepare(`INSERT INTO reviews (job_id, entry_id, verdict, reasons, comment, scenario_id, instance, reviewed_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(r.jobId, r.entryId, r.verdict, JSON.stringify(r.reasons), r.comment, r.scenarioId ?? null, r.instance ?? null, r.at)
+export function insertReview(r: { jobId: string; entryId: number; verdict: string; reasons: string[]; comment: string; scenarioId?: string; instance?: string; at: string; precheck?: string }): void {
+  getDb().prepare(`INSERT INTO reviews (job_id, entry_id, verdict, reasons, comment, scenario_id, instance, reviewed_at, precheck)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(r.jobId, r.entryId, r.verdict, JSON.stringify(r.reasons), r.comment, r.scenarioId ?? null, r.instance ?? null, r.at, r.precheck ?? null)
+}
+
+/** How often the AI pre-check matched your approve/reject (live decisions only). */
+export function precheckAgreement(): { compared: number; agreed: number; falseRejects: number; missedRejects: number } {
+  const row = getDb().prepare(`SELECT COUNT(*) compared,
+      SUM((precheck = 'approve' AND verdict = 'approved') OR (precheck = 'reject' AND verdict = 'rejected')) agreed,
+      SUM(precheck = 'reject' AND verdict = 'approved') falseRejects,
+      SUM(precheck = 'approve' AND verdict = 'rejected') missedRejects
+    FROM reviews WHERE undone_at IS NULL AND precheck IS NOT NULL AND verdict IN ('approved', 'rejected')`).get() as any
+  return { compared: row.compared || 0, agreed: row.agreed || 0, falseRejects: row.falseRejects || 0, missedRejects: row.missedRejects || 0 }
 }
 
 /** Mark the job's latest live review as undone. */
@@ -204,6 +217,7 @@ export function rejectReasonCounts(): { reason: string; n: number }[] {
 // --- usage (Claude CLI calls) -------------------------------------------------------
 
 export interface UsageRecord {
+  provider?: Provider
   label: string
   model: string
   ok: boolean
@@ -219,19 +233,26 @@ const localDayKey = (d: Date): string => `${d.getFullYear()}-${String(d.getMonth
 
 export function insertUsage(u: UsageRecord): void {
   const now = new Date()
-  getDb().prepare(`INSERT INTO usage (at, day, label, model, ok, cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, duration_ms)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(now.toISOString(), localDayKey(now), u.label, u.model, u.ok ? 1 : 0, u.costUsd, u.inputTokens, u.outputTokens, u.cacheReadTokens, u.cacheWriteTokens, u.durationMs)
+  getDb().prepare(`INSERT INTO usage (at, day, label, model, ok, cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, duration_ms, provider)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(now.toISOString(), localDayKey(now), u.label, u.model, u.ok ? 1 : 0, u.costUsd, u.inputTokens, u.outputTokens, u.cacheReadTokens, u.cacheWriteTokens, u.durationMs, u.provider || 'claude')
+}
+
+/** Tokens one engine used today (input + output + cache), for the daily MiniMax limit. */
+export function tokensToday(provider: Provider): number {
+  const r = getDb().prepare(`SELECT COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens), 0) n FROM usage WHERE day = ? AND provider = ?`).get(localDayKey(new Date()), provider) as { n: number }
+  return r.n
 }
 
 
 /** Totals per label for one local day, and per day for the last `days` days. */
-export function usageSummary(days: number): { today: UsageRow[]; byDay: UsageRow[]; byModelToday: UsageRow[] } {
+export function usageSummary(days: number): { today: UsageRow[]; byDay: UsageRow[]; byModelToday: UsageRow[]; byProviderToday: UsageRow[] } {
   const d = getDb()
   const today = localDayKey(new Date())
   const since = localDayKey(new Date(Date.now() - (days - 1) * 86400000))
   const cols = `COUNT(*) calls, COALESCE(SUM(cost_usd),0) costUsd, COALESCE(SUM(input_tokens),0) inputTokens, COALESCE(SUM(output_tokens),0) outputTokens, COALESCE(SUM(cache_read_tokens + cache_write_tokens),0) cacheTokens`
   return {
-    today: d.prepare(`SELECT label key, ${cols} FROM usage WHERE day = ? GROUP BY label ORDER BY costUsd DESC`).all(today) as UsageRow[],
+    today: d.prepare(`SELECT label key, provider, ${cols} FROM usage WHERE day = ? GROUP BY provider, label ORDER BY costUsd DESC`).all(today) as UsageRow[],
+    byProviderToday: d.prepare(`SELECT provider key, ${cols} FROM usage WHERE day = ? GROUP BY provider`).all(today) as UsageRow[],
     byModelToday: d.prepare(`SELECT model key, ${cols} FROM usage WHERE day = ? GROUP BY model ORDER BY costUsd DESC`).all(today) as UsageRow[],
     byDay: d.prepare(`SELECT day key, ${cols} FROM usage WHERE day >= ? GROUP BY day ORDER BY day`).all(since) as UsageRow[],
   }

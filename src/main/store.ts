@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
-import type { AppConfig, Entry, LearningLogEntry, RenderJob, RenderSettings, ReviewSettings, NotifySettings, SavedConcept } from '../shared/types'
+import type { AppConfig, Entry, LearningLogEntry, RenderJob, RenderSettings, ReviewSettings, NotifySettings, AiSettings, SavedConcept } from '../shared/types'
 import {
   getDb, migrateFromJson, backupDb, loadEntries, getEntry, upsertEntries, countEntries, clearEntries,
   loadRenderJobs, syncRenderJobs,
@@ -33,6 +33,14 @@ export const DEFAULT_RENDER: RenderSettings = {
 }
 
 export const DEFAULT_REVIEW: ReviewSettings = REVIEW_DEFAULTS // shared so the renderer can fill gaps too
+
+// Defaults keep the pre-MiniMax behaviour: titles/captions on the generation model,
+// coverage + reference naming on Haiku; MiniMax and the pre-check off until switched on.
+export const DEFAULT_AI: AiSettings = {
+  minimax: { enabled: false, cliPath: '', dailyTokenLimit: 500000 },
+  routes: { title: 'claude:generation', caption: 'claude:generation', scene: 'claude:claude-haiku-4-5', refAircraft: 'claude:claude-haiku-4-5' },
+  precheck: { enabled: false, model: 'MiniMax-M3', auto: true },
+}
 
 export const DEFAULT_NOTIFY: NotifySettings = {
   enabled: true,
@@ -75,6 +83,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   render: DEFAULT_RENDER,
   review: DEFAULT_REVIEW,
   notify: DEFAULT_NOTIFY,
+  ai: DEFAULT_AI,
 }
 
 function readJson<T>(file: string, fallback: T): T {
@@ -247,6 +256,11 @@ export function getConfig(): AppConfig {
     render: { ...DEFAULT_RENDER, ...(stored.render || {}) },
     review: { ...DEFAULT_REVIEW, ...(stored.review || {}) },
     notify: { ...DEFAULT_NOTIFY, ...(stored.notify || {}) },
+    ai: {
+      minimax: { ...DEFAULT_AI.minimax, ...(stored.ai?.minimax || {}) },
+      routes: { ...DEFAULT_AI.routes, ...(stored.ai?.routes || {}) },
+      precheck: { ...DEFAULT_AI.precheck, ...(stored.ai?.precheck || {}) },
+    },
   }
 }
 
@@ -257,6 +271,11 @@ export function setConfig(patch: Partial<AppConfig>): AppConfig {
   if (patch.render) next.render = { ...cur.render, ...patch.render }
   if (patch.review) next.review = { ...cur.review, ...patch.review }
   if (patch.notify) next.notify = { ...cur.notify, ...patch.notify }
+  if (patch.ai) next.ai = {
+    minimax: { ...cur.ai.minimax, ...(patch.ai.minimax || {}) },
+    routes: { ...cur.ai.routes, ...(patch.ai.routes || {}) },
+    precheck: { ...cur.ai.precheck, ...(patch.ai.precheck || {}) },
+  }
   writeJson(p('config.json'), next)
   return next
 }

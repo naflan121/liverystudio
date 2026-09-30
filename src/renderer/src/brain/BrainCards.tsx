@@ -8,7 +8,8 @@ const CATEGORY: Record<string, string> = {
   prompt: 'Writing prompts', rewrite: 'Writing prompts', candidates: 'Writing prompts', title: 'Writing prompts',
   learn: 'Learning (playbook)', redistill: 'Learning (playbook)',
   'render-lessons': 'Render review', 'fix-prompt': 'Render review',
-  'ref-aircraft': 'Reference images', scene: 'Coverage (aircraft + setting)',
+  'ref-aircraft': 'Reference images', scene: 'Coverage (aircraft + setting)', backfill: 'Coverage (aircraft + setting)',
+  precheck: 'AI pre-check (video)', test: 'Connection tests',
   trends: 'Trend research', concept: 'Concepts', caption: 'Captions',
 }
 const category = (label: string): string => CATEGORY[label] || 'Other'
@@ -28,7 +29,7 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
 
 /** Usage meter: today's API-equivalent cost + tokens, by activity, and the last 14 days. */
 export function UsageCard() {
-  const [data, setData] = useState<{ today: UsageRow[]; byDay: UsageRow[]; byModelToday: UsageRow[] } | null>(null)
+  const [data, setData] = useState<{ today: UsageRow[]; byDay: UsageRow[]; byModelToday: UsageRow[]; byProviderToday?: UsageRow[] } | null>(null)
   const [hover, setHover] = useState<number | null>(null)
   useEffect(() => {
     let alive = true
@@ -41,7 +42,7 @@ export function UsageCard() {
   const cats = useMemo(() => {
     const m = new Map<string, UsageRow>()
     for (const r of data?.today || []) {
-      const k = category(r.key)
+      const k = `${category(r.key)}${r.provider === 'minimax' ? ' · MiniMax' : ''}`
       const c = m.get(k) || { key: k, calls: 0, costUsd: 0, inputTokens: 0, outputTokens: 0, cacheTokens: 0 }
       c.calls += r.calls; c.costUsd += r.costUsd; c.inputTokens += r.inputTokens; c.outputTokens += r.outputTokens; c.cacheTokens += r.cacheTokens
       m.set(k, c)
@@ -139,12 +140,15 @@ export function UsageCard() {
               </tbody>
             </table>
           )}
+        {(data?.byProviderToday?.length || 0) > 0 && (
+          <div style={{ fontSize: 11.5, color: MUTE, marginTop: 6 }}>By engine today: {data!.byProviderToday!.map((p) => `${p.key === 'minimax' ? 'MiniMax' : 'Claude'} ${p.calls} calls · ${tokens(p.inputTokens + p.outputTokens + p.cacheTokens)} tokens${p.key === 'claude' ? ` · ${money(p.costUsd)}` : ' (plan)'}`).join('  ·  ')}</div>
+        )}
         {(data?.byModelToday.length || 0) > 0 && (
           <div style={{ fontSize: 11.5, color: MUTE, marginTop: 6 }}>By model today: {data!.byModelToday.map((m) => `${m.key.replace(/^claude-/, '')} ${money(m.costUsd)}`).join(' · ')}</div>
         )}
       </div>
       <div style={{ fontSize: 11.5, color: MUTE, lineHeight: 1.5 }}>
-        Figures are what the Claude CLI reports for each call. On a Claude subscription you aren't billed per call — read them as the API-equivalent value, useful for comparing activities and days.
+        Claude figures are what the Claude CLI reports per call — on a subscription, read them as the API-equivalent value. MiniMax calls count tokens against your MiniMax plan (no dollar figure), so the cost chart covers Claude only.
       </div>
     </div>
   )
@@ -153,7 +157,8 @@ export function UsageCard() {
 /** Review record: what gets rejected and which formats Dola renders reliably. */
 export function ReviewRecordCard({ entries }: { entries: Entry[] }) {
   const [stats, setStats] = useState<{ scenarios: { scenario: string; approved: number; rejected: number }[]; reasons: { reason: string; n: number }[] } | null>(null)
-  useEffect(() => { window.api.reviewStats().then(setStats).catch(() => { /* ignore */ }) }, [])
+  const [agree, setAgree] = useState<{ compared: number; agreed: number; falseRejects: number; missedRejects: number } | null>(null)
+  useEffect(() => { window.api.reviewStats().then(setStats).catch(() => { /* ignore */ }); window.api.precheckAgreement().then(setAgree).catch(() => { /* ignore */ }) }, [])
   const label = (id: string): string => entries.find((e) => e.scenarioId === id)?.scenario || id
   if (!stats) return <div style={{ fontSize: 12.5, color: MUTE }}>Loading…</div>
   const reviewed = stats.scenarios.reduce((a, s) => a + s.approved + s.rejected, 0)
@@ -165,6 +170,7 @@ export function ReviewRecordCard({ entries }: { entries: Entry[] }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12 }}>
         <Stat label="Reviewed" value={String(reviewed)} sub="approved + rejected" />
         <Stat label="Approval rate" value={`${Math.round((approved / reviewed) * 100)}%`} sub={`${approved} approved`} />
+        <Stat label="AI agrees with you" value={agree && agree.compared ? `${Math.round((agree.agreed / agree.compared) * 100)}%` : '—'} sub={agree && agree.compared ? `${agree.agreed} of ${agree.compared} · ${agree.falseRejects} false rejects` : 'no pre-checked decisions yet'} />
       </div>
       {stats.reasons.length > 0 && (
         <div>

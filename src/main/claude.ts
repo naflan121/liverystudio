@@ -18,6 +18,7 @@ export interface ClaudeOptions {
 }
 
 export interface CallUsage {
+  provider?: 'claude' | 'minimax'
   label: string
   model: string
   ok: boolean

@@ -38,6 +38,9 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 const SETTINGS_SECTIONS: { id: string; label: string }[] = [
   { id: 's-ai', label: 'AI & models' },
   { id: 's-prompts', label: 'Prompts & titles' },
+  { id: 's-minimax', label: 'MiniMax' },
+  { id: 's-engines', label: 'Engine per task' },
+  { id: 's-precheck', label: 'AI pre-check' },
   { id: 's-render', label: 'Render (Dola)' },
   { id: 's-review', label: 'Review' },
   { id: 's-notify', label: 'Notifications' },
@@ -61,6 +64,11 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
     review: { ...REVIEW_DEFAULTS, ...(config.review || {}) },
     notify: { enabled: true, onlyWhenUnfocused: true, renderDone: true, renderFailed: true, capReached: true, queuePaused: true, autoRetry: false, ...(config.notify || {}) },
     render: { ...config.render, pauseAfterFailures: config.render?.pauseAfterFailures ?? 3 },
+    ai: {
+      minimax: { enabled: false, cliPath: '', dailyTokenLimit: 500000, ...(config.ai?.minimax || {}) },
+      routes: { title: 'claude:generation', caption: 'claude:generation', scene: 'claude:claude-haiku-4-5', refAircraft: 'claude:claude-haiku-4-5', ...(config.ai?.routes || {}) },
+      precheck: { enabled: false, model: 'MiniMax-M3', auto: true, ...(config.ai?.precheck || {}) },
+    },
   }))
   const [pb, setPb] = useState(playbook)
   const [savedAt, setSavedAt] = useState(0)
@@ -182,6 +190,23 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
   const setRender = (patch: Partial<AppConfig['render']>) => setC((prev) => ({ ...prev, render: { ...prev.render, ...patch } }))
   const setReview = (patch: Partial<AppConfig['review']>) => setC((prev) => ({ ...prev, review: { ...prev.review, ...patch } }))
   const setNotify = (patch: Partial<AppConfig['notify']>) => setC((prev) => ({ ...prev, notify: { ...prev.notify, ...patch } }))
+  const setAi = (part: 'minimax' | 'routes' | 'precheck', patch: Record<string, unknown>) => setC((prev) => ({ ...prev, ai: { ...prev.ai, [part]: { ...prev.ai[part], ...patch } } }))
+  const [mm, setMm] = useState<{ installed: boolean; cli: string | null; models: { id: string; video: boolean }[] } | null>(null)
+  const [mmTestModel, setMmTestModel] = useState('')
+  const [mmTest, setMmTest] = useState<{ ok: boolean; message: string } | null>(null)
+  const [mmTesting, setMmTesting] = useState(false)
+  useEffect(() => { window.api.miniMaxStatus().then((st) => { setMm(st); setMmTestModel(st.models.find((m) => /highspeed/i.test(m.id))?.id || st.models[0]?.id || '') }).catch(() => { /* ignore */ }) }, [])
+  async function testMiniMax() {
+    setMmTesting(true); setMmTest(null)
+    await window.api.setConfig({ ai: c.ai }) // test with what's on screen (enabled, path, limit)
+    try { setMmTest(await window.api.miniMaxTest(mmTestModel)) } finally { setMmTesting(false) }
+  }
+  // Engine choices per task: Claude models (plus "generation model") and the MiniMax models mcode has.
+  const engineOptions = [
+    { value: 'claude:generation', label: `Claude — generation model (${MODELS.find((m) => m.id === c.generationModel)?.label.split(' (')[0] || c.generationModel})` },
+    ...MODELS.map((m) => ({ value: `claude:${m.id}`, label: `Claude — ${m.label}` })),
+    ...(mm?.models || []).map((m) => ({ value: `minimax:${m.id}`, label: `MiniMax — ${m.id.replace(/^MiniMax-/, '')}${c.ai.minimax.enabled ? '' : ' (MiniMax is off)'}` })),
+  ]
   const isBrain = mode === 'brain'
   const [lessons, setLessons] = useState('')
   const [lessonsMsg, setLessonsMsg] = useState('')
@@ -320,6 +345,78 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
                 <select value={c.learningModel} onChange={(e) => set({ learningModel: e.target.value })} style={sel}>{MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}</select>
               </Field>
               <Field label="Request timeout (ms)">{num(c.timeoutMs, (n) => set({ timeoutMs: n }))}</Field>
+            </div>
+            <div style={{ fontSize: 12, color: MUTE }}>Prompt writing and learning always run on Claude. The smaller jobs below can run on either engine.</div>
+          </Card>
+          )}
+
+          {!isBrain && (
+          <Card title="MiniMax · second engine" id="s-minimax">
+            <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>
+              Uses <strong>MiniMax Code (mcode)</strong> on this PC with your MiniMax plan. The Studio runs it with <strong>all tools disabled</strong> in an empty scratch folder, so it can only answer — it can't run commands, edit files or drive Dola. Plan quota is used first; after that MiniMax may spend credits if auto credit usage is on in your MiniMax account, so keep a daily limit.
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13.5, fontWeight: 600 }}>
+              <input type="checkbox" checked={c.ai.minimax.enabled} onChange={(e) => setAi('minimax', { enabled: e.target.checked })} style={{ width: 16, height: 16, accentColor: ACCENT }} /> Use MiniMax
+            </label>
+            <div style={{ fontSize: 12.5, color: mm?.installed ? GOOD : BAD }}>
+              {mm === null ? 'Checking for mcode…' : mm.installed ? `mcode found · ${mm.models.length} model(s): ${mm.models.map((m) => m.id.replace(/^MiniMax-/, '') + (m.video ? ' (video)' : '')).join(', ')}` : 'mcode not found — install MiniMax Code or set the cli.js path below.'}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px,1fr))', gap: 14 }}>
+              <Field label="mcode cli.js path (blank = auto-detect)">
+                <input value={c.ai.minimax.cliPath} onChange={(e) => setAi('minimax', { cliPath: e.target.value })} placeholder={mm?.cli || 'auto-detect'} style={{ ...sel, boxSizing: 'border-box', fontFamily: 'var(--f-mono)', fontSize: 12 }} />
+              </Field>
+              <Field label="Daily token limit (0 = no limit)">{num(c.ai.minimax.dailyTokenLimit, (n) => setAi('minimax', { dailyTokenLimit: Math.max(0, n) }))}</Field>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <select value={mmTestModel} onChange={(e) => setMmTestModel(e.target.value)} style={{ ...sel, width: 'auto' }}>{(mm?.models || []).map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}</select>
+              <button onClick={testMiniMax} disabled={mmTesting || !c.ai.minimax.enabled || !mmTestModel} style={{ ...ghostBtn, opacity: mmTesting || !c.ai.minimax.enabled ? 0.6 : 1 }}>{mmTesting ? 'Testing…' : 'Test MiniMax'}</button>
+              {mmTest && <span style={{ fontSize: 13, color: mmTest.ok ? GOOD : BAD }}>{mmTest.message}</span>}
+            </div>
+          </Card>
+          )}
+
+          {!isBrain && (
+          <Card title="Engine per task" id="s-engines">
+            <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>Pick which engine and model handles each smaller job. Changes apply to the next call.</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px,1fr))', gap: 14 }}>
+              {([
+                ['title', 'Titles'],
+                ['caption', 'Captions + hashtags'],
+                ['scene', 'Coverage notes (aircraft + setting)'],
+                ['refAircraft', 'Reference images — naming the aircraft'],
+              ] as const).map(([k, label]) => (
+                <Field key={k} label={label}>
+                  <select value={c.ai.routes[k]} onChange={(e) => setAi('routes', { [k]: e.target.value })} style={sel}>
+                    {!engineOptions.some((o) => o.value === c.ai.routes[k]) && <option value={c.ai.routes[k]}>{c.ai.routes[k]}</option>}
+                    {engineOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </Field>
+              ))}
+            </div>
+            {Object.values(c.ai.routes).some((r) => r.startsWith('minimax:')) && !c.ai.minimax.enabled && (
+              <div style={{ fontSize: 12.5, color: BAD }}>Some tasks are set to MiniMax but MiniMax is off — they will fail until you switch it on.</div>
+            )}
+          </Card>
+          )}
+
+          {!isBrain && (
+          <Card title="AI pre-check of renders" id="s-precheck">
+            <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>
+              A MiniMax video model watches each finished render — with its scenario, prompt and your render lessons — and suggests <strong>approve</strong> or <strong>reject</strong> with reasons. It never decides for you; Review shows the suggestion and pre-ticks its reasons, and the Brain page tracks how often it agrees with you. About 9k MiniMax tokens per video.
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13.5, fontWeight: 600, opacity: c.ai.minimax.enabled ? 1 : 0.5 }}>
+              <input type="checkbox" disabled={!c.ai.minimax.enabled} checked={c.ai.precheck.enabled} onChange={(e) => setAi('precheck', { enabled: e.target.checked })} style={{ width: 16, height: 16, accentColor: ACCENT }} /> Pre-check renders with AI {!c.ai.minimax.enabled && <span style={{ color: MUTE, fontWeight: 400 }}>(switch MiniMax on first)</span>}
+            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px,1fr))', gap: 14, opacity: c.ai.precheck.enabled ? 1 : 0.5 }}>
+              <Field label="Video model">
+                <select value={c.ai.precheck.model} onChange={(e) => setAi('precheck', { model: e.target.value })} style={sel}>
+                  {!(mm?.models || []).some((m) => m.id === c.ai.precheck.model) && <option value={c.ai.precheck.model}>{c.ai.precheck.model}</option>}
+                  {(mm?.models || []).filter((m) => m.video).map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
+                </select>
+              </Field>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13.5, alignSelf: 'end', paddingBottom: 10 }}>
+                <input type="checkbox" checked={c.ai.precheck.auto} onChange={(e) => setAi('precheck', { auto: e.target.checked })} style={{ width: 16, height: 16, accentColor: ACCENT }} /> Run automatically when a render finishes
+              </label>
             </div>
           </Card>
           )}

@@ -147,6 +147,8 @@ export interface AppConfig {
   review: ReviewSettings
   /** Livery Studio: which Windows notifications to show. */
   notify: NotifySettings
+  /** Livery Studio: which engine (Claude / MiniMax) runs which task, and the render pre-check. */
+  ai: AiSettings
 }
 
 export interface LearningLogEntry {
@@ -249,6 +251,8 @@ export interface RenderJob {
   review?: JobReview
   /** Set when the Studio queued this job by itself after every take of the prompt was rejected. */
   auto?: 'rerender' | 'rewrite'
+  /** AI pre-check of the rendered video (MiniMax, video input). Advisory only. */
+  precheck?: PreCheck
 }
 
 /** 'skipped' = out of the review queue without a verdict (e.g. couldn't post it): file stays put, no learning. */
@@ -263,6 +267,46 @@ export interface JobReview {
 
 /** What to do when every rendered take of a prompt has been rejected. */
 export type AllRejectedAction = 'ask' | 'rerender' | 'rewrite'
+
+/**
+ * Engine for one task: 'claude:generation' (the generation model in Settings),
+ * 'claude:<model id>', or 'minimax:<model id>'.
+ */
+export type EngineRoute = string
+
+export interface AiSettings {
+  minimax: {
+    /** Allow the Studio to call MiniMax Code (mcode) at all. */
+    enabled: boolean
+    /** Path to mcode's cli.js; blank = the npm global install. */
+    cliPath: string
+    /** Stop calling MiniMax for the day after this many tokens (0 = no limit). Protects plan quota and credits. */
+    dailyTokenLimit: number
+  }
+  /** Which engine writes titles, captions, coverage notes and reference-image names. Prompts + learning stay on Claude. */
+  routes: { title: EngineRoute; caption: EngineRoute; scene: EngineRoute; refAircraft: EngineRoute }
+  precheck: {
+    /** Let a MiniMax video model watch each finished render and suggest approve/reject. */
+    enabled: boolean
+    /** MiniMax model with video input, e.g. MiniMax-M3. */
+    model: string
+    /** Run automatically when a render finishes (otherwise only from the Review button). */
+    auto: boolean
+  }
+}
+
+export interface PreCheck {
+  status: 'running' | 'done' | 'failed'
+  verdict?: 'approve' | 'reject'
+  /** 0–1: how sure the model is of its verdict. */
+  confidence?: number
+  /** Reject-reason ids (same list as Review). */
+  reasons?: string[]
+  notes?: string
+  model?: string
+  error?: string
+  at: string
+}
 
 export interface NotifySettings {
   /** Master switch. */
@@ -324,4 +368,7 @@ export interface RenderOverview {
 }
 
 /** Usage meter: totals for one key (a call label, a model, or a day). */
-export interface UsageRow { key: string; calls: number; costUsd: number; inputTokens: number; outputTokens: number; cacheTokens: number }
+/** Which engine a usage row / task ran on. */
+export type Provider = 'claude' | 'minimax'
+
+export interface UsageRow { provider?: Provider; key: string; calls: number; costUsd: number; inputTokens: number; outputTokens: number; cacheTokens: number }

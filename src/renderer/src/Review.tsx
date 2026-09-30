@@ -67,6 +67,10 @@ export function Review({ entries, jobs, onOpenEntry, onClose }: {
 
   useEffect(() => { window.api.reviewStats().then(setStats).catch(() => { /* ignore */ }) }, [counts.approved, counts.rejected])
   useEffect(() => { setRejecting(false); setReasons([]); setComment(''); setErr(''); setShowPrompt(false) }, [sel?.id])
+  useEffect(() => {
+    const p = sel?.precheck
+    if (rejecting && reasons.length === 0 && p?.status === 'done' && p.verdict === 'reject' && p.reasons?.length) setReasons(p.reasons)
+  }, [rejecting]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const nextAwaiting = useCallback((afterId: string): string | null => {
     const awaiting = [...takes].reverse().filter((j) => !j.review && j.id !== afterId)
@@ -171,7 +175,7 @@ export function Review({ entries, jobs, onOpenEntry, onClose }: {
                     <span style={{ width: 8, height: 8, borderRadius: '50%', background: m.color, flexShrink: 0 }} title={m.label} />
                     <span style={{ minWidth: 0, flex: 1 }}>
                       <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.title}</span>
-                      <span style={{ display: 'block', fontSize: 11, color: MUTE, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{byId.get(j.entryId)?.scenario || '—'} · {when(j.endedAt)}{j.auto ? ' · auto retry' : ''}</span>
+                      <span style={{ display: 'block', fontSize: 11, color: MUTE, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{byId.get(j.entryId)?.scenario || '—'} · {when(j.endedAt)}{j.auto ? ' · auto retry' : ''}{j.precheck?.status === 'done' ? <span style={{ color: j.precheck.verdict === 'reject' ? BAD : GOOD, fontWeight: 600 }}> · AI {j.precheck.verdict === 'reject' ? '✗' : '✓'}</span> : j.precheck?.status === 'running' ? <span style={{ color: INFO }}> · AI…</span> : null}</span>
                     </span>
                   </button>
                 )
@@ -233,6 +237,8 @@ export function Review({ entries, jobs, onOpenEntry, onClose }: {
                   </div>
                 )}
 
+                <PrecheckPanel job={sel} />
+
                 {everyRejected && (
                   <div style={{ border: `1px solid ${LINE}`, borderRadius: 12, padding: '12px 14px', background: 'var(--accent-soft)', display: 'grid', gap: 8 }}>
                     <div style={{ fontSize: 13.5, fontWeight: 600 }}>Every take of this prompt was rejected.</div>
@@ -289,6 +295,48 @@ export function Review({ entries, jobs, onOpenEntry, onClose }: {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+/** The AI pre-check suggestion for one take (MiniMax video model). Advisory only. */
+function PrecheckPanel({ job }: { job: RenderJob }) {
+  const p = job.precheck
+  const [asked, setAsked] = useState(false)
+  const run = (): void => { setAsked(true); window.api.runPrecheck(job.id).catch(() => { /* errors land on the job */ }) }
+  const box: React.CSSProperties = { border: `1px solid ${LINE}`, borderRadius: 12, padding: '10px 14px', background: 'var(--surface)', display: 'grid', gap: 6 }
+  const head = <div style={{ ...lbl, marginBottom: 0 }}>AI pre-check</div>
+  if (!p) {
+    return (
+      <div style={{ ...box, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        {head}<span style={{ fontSize: 12.5, color: MUTE, flex: 1 }}>Not checked.</span>
+        <button onClick={run} disabled={asked} style={{ ...ghostBtn, padding: '4px 11px', fontSize: 12.5 }}>{asked ? 'Queued…' : 'Run AI check'}</button>
+      </div>
+    )
+  }
+  if (p.status === 'running') {
+    return <div style={{ ...box, display: 'flex', alignItems: 'center', gap: 10 }}>{head}<span style={{ fontSize: 12.5, color: INFO }}>{p.model || 'MiniMax'} is watching the video…</span></div>
+  }
+  if (p.status === 'failed') {
+    return (
+      <div style={box}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>{head}<span style={{ fontSize: 12.5, color: BAD, flex: 1 }}>Check failed</span><button onClick={run} style={{ ...ghostBtn, padding: '4px 11px', fontSize: 12.5 }}>Run again</button></div>
+        <div style={{ fontSize: 12, color: MUTE, wordBreak: 'break-word' }}>{p.error}</div>
+      </div>
+    )
+  }
+  const reject = p.verdict === 'reject'
+  return (
+    <div style={{ ...box, borderColor: reject ? BAD : GOOD }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        {head}
+        <span style={{ fontWeight: 700, color: reject ? BAD : GOOD }}>Likely {reject ? 'reject' : 'approve'}{p.confidence != null ? ` · ${Math.round(p.confidence * 100)}%` : ''}</span>
+        <span style={{ fontSize: 11.5, color: MUTE, flex: 1 }}>{p.model}</span>
+        <button onClick={run} style={{ ...ghostBtn, padding: '3px 10px', fontSize: 12 }}>Run again</button>
+      </div>
+      {reject && (p.reasons?.length || 0) > 0 && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{p.reasons!.map((x) => <span key={x} style={{ fontSize: 12, borderRadius: 20, padding: '2px 9px', background: 'var(--bad-soft)', color: BAD }}>{reasonLabel(x)}</span>)}</div>}
+      {p.notes && <div style={{ fontSize: 12.5, lineHeight: 1.5 }}>{p.notes}</div>}
+      <div style={{ fontSize: 11, color: MUTE }}>A suggestion, not a decision.{reject ? ' Its reasons are pre-ticked when you open Reject.' : ''}</div>
     </div>
   )
 }

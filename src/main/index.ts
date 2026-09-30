@@ -4,16 +4,18 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { callClaude, testCli, setUsageSink } from './claude'
 import { initNotify, notify } from './notify'
+import { callMiniMax, setMiniMaxUsageSink, miniMaxStatus } from './minimax'
+import { initPrecheck, queuePrecheck } from './precheck'
 import {
   getConfig, setConfig, getHistory, setHistory, getPlaybook, setPlaybook,
   getPlaybookVersions, appendLearningLog, getLearningLog, resetMemory, dataDir, setDataDir,
   getTrends, setTrends, getSavedConcepts, setSavedConcepts, importFromLiveryLab, liveryLabDataDir, pullNewFromLab, initStorage, backupStorage, getRenderLessons, setRenderLessons,
 } from './store'
-import { closeDb, reviewStatsByScenario, rejectReasonCounts, getEntry as getEntryById, insertUsage, usageSummary } from './db'
+import { closeDb, reviewStatsByScenario, rejectReasonCounts, getEntry as getEntryById, insertUsage, usageSummary, precheckAgreement } from './db'
 import { initReview, decide as reviewDecide, undo as reviewUndo, rewriteAndRender, rerender, markUnusable } from './review'
 import { renderLessonsBlock } from '../shared/review'
 import { buildReferenceBlock, fillImage1 } from '../shared/references'
-import { initRenderQueue, overview as renderOverview, submit as renderSubmit, cancel as renderCancel, retry as renderRetry, remove as renderRemove, listJobs, updateJob, pauseQueue, resumeQueue } from './render'
+import { initRenderQueue, overview as renderOverview, submit as renderSubmit, cancel as renderCancel, retry as renderRetry, remove as renderRemove, listJobs, updateJob, pauseQueue, resumeQueue, setOnRenderDone } from './render'
 import { SYSTEM, TITLE_SYSTEM, LEARN_SYSTEM, EXTRACT_SYSTEM, TREND_SYSTEM, CAPTION_SYSTEM, CONCEPT_SYSTEM, longLimit, buildUserMessage, titleMsg, captionMsg, buildLearnMessage, buildRedistillMessage, buildConceptMessage, extractMsg, parseScene, parseConcept, trendsMsg, parseVariants } from '../shared/prompts'
 import { cleanTitle, toFilename, clampPlaybook } from '../shared/util'
 import { overusedOperators } from '../shared/brain'
@@ -189,6 +191,20 @@ function registerMediaProtocol(): void {
   })
 }
 
+// Livery Studio: which engine runs a task — Settings → AI & models → Engine per task.
+// 'claude:generation' = the generation model; 'claude:<id>' / 'minimax:<id>' = that model.
+// MiniMax has no separate system prompt, so the instructions ride at the top of the input.
+async function runRoute(route: string, message: string, o: { system: string; label: string; timeoutMs?: number }): Promise<string> {
+  const cfg = getConfig()
+  const i = route.indexOf(':')
+  const engine = i < 0 ? 'claude' : route.slice(0, i)
+  const model = i < 0 ? route : route.slice(i + 1)
+  if (engine === 'minimax') {
+    return callMiniMax(`${o.system}\n\n---\n\n${message}`, { model, label: o.label, timeoutMs: o.timeoutMs ?? Math.max(cfg.timeoutMs, 120000), onLog: claudeLog })
+  }
+  return callClaude(message, { cliPath: cfg.cliPath, model: !model || model === 'generation' ? cfg.generationModel : model, timeoutMs: o.timeoutMs ?? cfg.timeoutMs, system: o.system, label: o.label, onLog: claudeLog })
+}
+
 // Livery Studio: the "Reference images" block for a render. Image 1 names the exact
 // aircraft the prompt uses (one Haiku call per prompt, reused by every later take);
 // Image 2 is the optional per-scenario line from Settings → Render.
@@ -198,7 +214,7 @@ async function resolveReferenceBlock(job: RenderJob): Promise<string> {
   if (aircraft === undefined) {
     emitLog('info', `Naming the aircraft for reference images: "${job.title}"…`)
     const c = getConfig()
-    const raw = await exclusive(() => callClaude(extractMsg(job.prompt), { cliPath: c.cliPath, model: FAST_MODEL, timeoutMs: c.timeoutMs, system: EXTRACT_SYSTEM, label: 'ref-aircraft', onLog: claudeLog }))
+    const raw = await exclusive(() => runRoute(c.ai.routes.refAircraft, extractMsg(job.prompt), { system: EXTRACT_SYSTEM, label: 'ref-aircraft' }))
     aircraft = parseScene(raw).aircraft
   }
   updateJob(job.id, { refAircraft: aircraft })
@@ -308,7 +324,7 @@ function registerIpc(): void {
       emitLog('step', 'Writing a title…')
       try {
         title = cleanTitle(
-          await callClaude(titleMsg(text, recentTitles(history)), { ...base, system: TITLE_SYSTEM, label: 'title' }),
+          await runRoute(cfg.ai.routes.title, titleMsg(text, recentTitles(history)), { system: TITLE_SYSTEM, label: 'title' }),
           cfg.titleMaxLen,
         )
         if (title) emitLog('info', `Title: "${title}"`)
@@ -355,9 +371,7 @@ function registerIpc(): void {
   ipcMain.handle('caption', (_e, payload: { text: string; title: string }) => exclusive(async () => {
     const cfg = getConfig()
     emitLog('step', 'Writing a caption + hashtags…')
-    const c = (await callClaude(captionMsg(payload.text, payload.title || ''), {
-      cliPath: cfg.cliPath, model: cfg.generationModel, timeoutMs: cfg.timeoutMs, system: CAPTION_SYSTEM, label: 'caption', onLog: claudeLog,
-    })).trim()
+    const c = (await runRoute(cfg.ai.routes.caption, captionMsg(payload.text, payload.title || ''), { system: CAPTION_SYSTEM, label: 'caption' })).trim()
     if (c) emitLog('ok', 'Caption ready.')
     return c
   }))
@@ -369,9 +383,7 @@ function registerIpc(): void {
     const cfg = getConfig()
     emitLog('step', 'Noting the aircraft and setting this one used…')
     try {
-      const raw = await callClaude(extractMsg(text), {
-        cliPath: cfg.cliPath, model: FAST_MODEL, timeoutMs: cfg.timeoutMs, system: EXTRACT_SYSTEM, label: 'scene', onLog: claudeLog,
-      })
+      const raw = await runRoute(cfg.ai.routes.scene, extractMsg(text), { system: EXTRACT_SYSTEM, label: 'scene' })
       const scene = parseScene(raw)
       if (scene.aircraft || scene.environment) emitLog('info', `Coverage — aircraft: ${scene.aircraft || 'n/a'} · setting: ${scene.environment || 'n/a'}.`)
       else emitLog('warn', 'Nothing identifiable in the prompt — not recorded.')
@@ -391,9 +403,7 @@ function registerIpc(): void {
     let filled = 0
     for (const t of targets) {
       try {
-        const raw = await callClaude(extractMsg(t.text), {
-          cliPath: cfg.cliPath, model: FAST_MODEL, timeoutMs: cfg.timeoutMs, system: EXTRACT_SYSTEM, label: 'backfill', onLog: claudeLog,
-        })
+        const raw = await runRoute(cfg.ai.routes.scene, extractMsg(t.text), { system: EXTRACT_SYSTEM, label: 'backfill' })
         const scene = parseScene(raw)
         if (scene.environment) t.pickedEnv = scene.environment
         if (!t.pickedAircraft && scene.aircraft) t.pickedAircraft = scene.aircraft
@@ -408,9 +418,7 @@ function registerIpc(): void {
   ipcMain.handle('title', (_e, payload: { text: string; avoid: string[] }) => exclusive(async () => {
     const cfg = getConfig()
     emitLog('step', 'Writing a new title…')
-    const t = await callClaude(titleMsg(payload.text, payload.avoid || []), {
-      cliPath: cfg.cliPath, model: cfg.generationModel, timeoutMs: cfg.timeoutMs, system: TITLE_SYSTEM, label: 'title', onLog: claudeLog,
-    })
+    const t = await runRoute(cfg.ai.routes.title, titleMsg(payload.text, payload.avoid || []), { system: TITLE_SYSTEM, label: 'title' })
     return cleanTitle(t, cfg.titleMaxLen)
   }))
 
@@ -516,6 +524,15 @@ function registerIpc(): void {
   ipcMain.handle('render:overview', () => renderOverview())
   ipcMain.handle('render:pause', () => { pauseQueue('Paused by you.', false); return true })
   ipcMain.handle('render:resume', () => { resumeQueue(); return true })
+  ipcMain.handle('minimax:status', () => miniMaxStatus())
+  ipcMain.handle('minimax:test', async (_e, model: string) => {
+    try {
+      const r = await callMiniMax('Reply with exactly: OK', { model, label: 'test', timeoutMs: 90000, maxSteps: 1, onLog: claudeLog })
+      return { ok: /OK/i.test(r), message: /OK/i.test(r) ? `Connected — ${model} answered.` : `Reached MiniMax (unexpected reply: ${r.slice(0, 60)})` }
+    } catch (e: any) { return { ok: false, message: e?.message || String(e) } }
+  })
+  ipcMain.handle('precheck:run', (_e, jobId: string) => { queuePrecheck(jobId, true); return true })
+  ipcMain.handle('precheck:agreement', () => precheckAgreement())
   ipcMain.handle('usage:summary', (_e, days: number) => usageSummary(Math.max(1, Math.min(90, days || 14))))
   ipcMain.handle('notify:test', () => notify('test', 'Livery Studio notifications work', 'This is how render, failure and pause alerts will look.', 'today', true))
   ipcMain.handle('render:submit', (_e, entryIds: number[], opts?: { references?: boolean }) => entryIds.map((id) => renderSubmit(id, opts || {})))
@@ -591,6 +608,7 @@ if (!gotLock) {
     // Usage meter: every Claude CLI call records its reported cost + tokens.
     setUsageSink((u) => { try { insertUsage(u) } catch { /* never break a call over metering */ } })
     initNotify(() => win)
+    setMiniMaxUsageSink((u) => { try { insertUsage(u) } catch { /* metering never breaks a call */ } })
     // First run: seed the brain (playbook, history, concepts…) from Livery Lab. Copy only.
     const imported = importFromLiveryLab()
     registerMediaProtocol()
@@ -605,6 +623,9 @@ if (!gotLock) {
       }),
       historyChanged: () => { if (win && !win.isDestroyed()) win.webContents.send('history:changed') },
     })
+    initPrecheck(emitLog)
+    // AI pre-check (Settings → AI & models): watch each finished render and suggest a verdict.
+    setOnRenderDone((job) => { const p = getConfig().ai.precheck; if (p.enabled && p.auto && getConfig().ai.minimax.enabled) queuePrecheck(job.id) })
     win?.webContents.once('did-finish-load', () => {
       if (migrated && (migrated.entries || migrated.jobs)) emitLog('ok', `Moved storage to SQLite: ${migrated.entries} prompt(s) and ${migrated.jobs} render job(s) imported. The old JSON files are left in place as a backup.`)
       if (imported.imported.length) emitLog('ok', `First run: imported the Livery Lab brain from ${imported.from} (${imported.imported.join(', ')}). The Lab's own files were not touched.`)

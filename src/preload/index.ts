@@ -75,8 +75,13 @@ const api = {
   // --- Livery Studio: queue pause, usage meter, notifications ---
   renderPause: (): Promise<boolean> => ipcRenderer.invoke('render:pause'),
   renderResume: (): Promise<boolean> => ipcRenderer.invoke('render:resume'),
-  usageSummary: (days: number): Promise<{ today: UsageRow[]; byDay: UsageRow[]; byModelToday: UsageRow[] }> => ipcRenderer.invoke('usage:summary', days),
+  usageSummary: (days: number): Promise<{ today: UsageRow[]; byDay: UsageRow[]; byModelToday: UsageRow[]; byProviderToday: UsageRow[] }> => ipcRenderer.invoke('usage:summary', days),
   testNotification: (): Promise<boolean> => ipcRenderer.invoke('notify:test'),
+  // --- MiniMax engine + AI pre-check ---
+  miniMaxStatus: (): Promise<{ installed: boolean; cli: string | null; models: { id: string; video: boolean }[] }> => ipcRenderer.invoke('minimax:status'),
+  miniMaxTest: (model: string): Promise<{ ok: boolean; message: string }> => ipcRenderer.invoke('minimax:test', model),
+  runPrecheck: (jobId: string): Promise<boolean> => ipcRenderer.invoke('precheck:run', jobId),
+  precheckAgreement: (): Promise<{ compared: number; agreed: number; falseRejects: number; missedRejects: number }> => ipcRenderer.invoke('precheck:agreement'),
   /** A clicked notification asks the window to open a screen. */
   onNav: (cb: (view: string) => void): (() => void) => {
     const handler = (_e: unknown, view: string): void => cb(view)

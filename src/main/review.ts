@@ -85,7 +85,7 @@ export function decide(jobId: string, verdict: ReviewVerdict, reasons: string[],
   updateJob(job.id, { file, review })
   writeSidecarReview(file, review)
   const entry = getEntry(job.entryId)
-  insertReview({ jobId: job.id, entryId: job.entryId, verdict, reasons: review.reasons, comment: review.comment, scenarioId: entry?.scenarioId, instance: job.instanceName, at })
+  insertReview({ jobId: job.id, entryId: job.entryId, verdict, reasons: review.reasons, comment: review.comment, scenarioId: entry?.scenarioId, instance: job.instanceName, at, precheck: job.precheck?.status === 'done' ? job.precheck.verdict : undefined })
   deps.emitLog(verdict === 'rejected' ? 'warn' : verdict === 'approved' ? 'ok' : 'info', `${verdict === 'approved' ? 'Approved' : verdict === 'rejected' ? 'Rejected' : 'Skipped'}: "${job.title}"${review.reasons.length ? ` — ${review.reasons.map(reasonLabel).join(', ')}` : ''}`)
 
   if (verdict === 'rejected') {

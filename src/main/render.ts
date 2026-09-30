@@ -90,6 +90,10 @@ function notePageFailure(message: string): void {
 
 let capNotifiedDay = ''
 
+// Called once per finished render (the AI pre-check hooks in here).
+let onRenderDone: (job: RenderJob) => void = () => { /* set by index.ts */ }
+export function setOnRenderDone(fn: (job: RenderJob) => void): void { onRenderDone = fn }
+
 const localDay = (d: Date): string => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
 
 /** Renders sent to Dola today (local time) — what the daily cap counts. */
@@ -322,6 +326,7 @@ async function runJob(job: RenderJob, inst: { id: number; name: string; isInitia
     patch(job, { status: 'done', file, bytes, width: v.width, height: v.height, endedAt: new Date().toISOString(), note: undefined })
     emitLog('ok', `Video saved: ${path.basename(file)} (${(bytes / 1e6).toFixed(1)} MB)`)
     notify('renderDone', 'Render ready for review', job.title, 'review')
+    try { onRenderDone(job) } catch { /* the pre-check is optional */ }
   } catch (e: any) {
     if (e instanceof Cancelled) {
       patch(job, { status: 'cancelled', endedAt: new Date().toISOString(), note: undefined })
