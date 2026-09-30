@@ -178,6 +178,8 @@ export interface RenderSettings {
   model: string
   duration: string
   aspect: string
+  /** Standing instructions typed between the settings block and the prompt (blank = none). */
+  extraInstructions: string
   /** How long to wait for Dola to finish one video after it starts. */
   waitMinutes: number
   /** Start a stopped instance when no running one is free. */
@@ -194,6 +196,8 @@ export interface RenderJob {
   entryId: number
   /** Snapshot of the prompt/title at submit time — the entry can change later. */
   prompt: string
+  /** Additional instructions sent above the prompt — captured when the job is sent to Dola. */
+  instructions?: string
   title: string
   filename: string
   status: RenderStatus

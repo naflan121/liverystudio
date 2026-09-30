@@ -197,7 +197,9 @@ async function runJob(job: RenderJob, inst: { id: number; name: string; isInitia
     if (!resuming) {
       patch(job, { status: 'sending' })
       emitLog('step', `Sending "${job.title}" to Dola on ${inst.name}…`)
-      await fillVideoPrompt(page, { prompt: job.prompt, model: cfg.model, duration: cfg.duration, aspect: cfg.aspect })
+      // Captured at send time (not queue time), so edits in Settings apply to anything still waiting.
+      patch(job, { instructions: cfg.extraInstructions?.trim() || undefined })
+      await fillVideoPrompt(page, { prompt: job.prompt, model: cfg.model, duration: cfg.duration, aspect: cfg.aspect, instructions: job.instructions })
       const sent = await sendAndHandleBusy(page, cancelled)
       patch(job, { chatUrl: sent.url })
       if (sent.status === 'still_busy') {
@@ -223,7 +225,7 @@ async function runJob(job: RenderJob, inst: { id: number; name: string; isInitia
     const bytes = await downloadFile(v.url, file)
     fs.writeFileSync(file.replace(/\.mp4$/i, '.json'), JSON.stringify({
       entryId: job.entryId, title: job.title, prompt: job.prompt,
-      model: cfg.model, duration: cfg.duration, aspect: cfg.aspect,
+      model: cfg.model, duration: cfg.duration, aspect: cfg.aspect, instructions: job.instructions,
       instance: inst.name, chatUrl: job.chatUrl, width: v.width, height: v.height, bytes,
       submitted: job.createdAt, saved: new Date().toISOString(),
     }, null, 2))

@@ -137,8 +137,8 @@ async function typePrompt(page: Page, prompt: string): Promise<void> {
   if (await send.isDisabled()) throw new Error('Prompt typed but the send button stayed disabled.')
 }
 
-/** New chat -> Pro -> "Generate Videos" skill -> settings block -> prompt (not sent). */
-export async function fillVideoPrompt(page: Page, o: { prompt: string; model: string; duration: string; aspect: string }): Promise<void> {
+/** New chat -> Pro -> "Generate Videos" skill -> settings block -> [instructions] -> prompt (not sent). */
+export async function fillVideoPrompt(page: Page, o: { prompt: string; model: string; duration: string; aspect: string; instructions?: string }): Promise<void> {
   await openNewChat(page)
   await setMode(page, 'Pro')
   await clearEditor(page)
@@ -146,7 +146,9 @@ export async function fillVideoPrompt(page: Page, o: { prompt: string; model: st
   await page.locator(SEL.slashOption).filter({ hasText: VIDEO_SKILL.option }).first().click({ timeout: 10_000 })
   await page.waitForTimeout(300)
   const header = [o.model, o.duration, o.aspect, ...VIDEO_EXTRA].join('\n')
-  await typePrompt(page, `${header}\n\n${o.prompt}`)
+  // Optional standing instructions (Settings → Render) sit between the settings block and the prompt.
+  const extra = o.instructions?.trim()
+  await typePrompt(page, extra ? `${header}\n\n${extra}\n\n${o.prompt}` : `${header}\n\n${o.prompt}`)
 }
 
 const lastReplyText = (page: Page): Promise<string | null> => page.evaluate((sel) => {

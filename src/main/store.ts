@@ -16,6 +16,7 @@ export const DEFAULT_RENDER: RenderSettings = {
   model: 'Seedance 2.5',
   duration: '15 Sec',
   aspect: '9:16 vertical',
+  extraInstructions: '',
   waitMinutes: 25,
   autoStartInstances: true,
   autoRender: false,

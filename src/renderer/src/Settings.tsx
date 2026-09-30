@@ -486,6 +486,14 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
               <Field label="Duration line"><input value={c.render.duration} onChange={(e) => setRender({ duration: e.target.value })} style={{ ...sel, boxSizing: 'border-box' }} /></Field>
               <Field label="Aspect line"><input value={c.render.aspect} onChange={(e) => setRender({ aspect: e.target.value })} style={{ ...sel, boxSizing: 'border-box' }} /></Field>
             </div>
+            <Field label="Additional instructions (optional — sent after the settings lines, before the prompt)">
+              <textarea value={c.render.extraInstructions || ''} onChange={(e) => setRender({ extraInstructions: e.target.value })} rows={4} placeholder="e.g. Keep the aircraft's orientation constant for the whole clip." style={{ width: '100%', padding: '10px 12px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 13, boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit', color: INK }} />
+            </Field>
+            <Field label="What Dola receives">
+              <pre style={{ margin: 0, fontSize: 11.5, color: MUTE, fontFamily: 'ui-monospace, monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: '#faf9f6', border: `1px solid ${LINE}`, borderRadius: 9, padding: '9px 11px', lineHeight: 1.55 }}>
+                {[c.render.model, c.render.duration, c.render.aspect, 'NotifyHuman Artifacts', 'Dont ask me any more confirmation go ahead', '', ...(c.render.extraInstructions?.trim() ? [c.render.extraInstructions.trim(), ''] : []), '[prompt]'].join('\n')}
+              </pre>
+            </Field>
             <Field label="Video folder">
               <div style={{ display: 'flex', gap: 8 }}>
                 <input value={c.render.outputDir} onChange={(e) => setRender({ outputDir: e.target.value })} style={{ ...sel, boxSizing: 'border-box', fontFamily: 'ui-monospace, monospace', fontSize: 12.5 }} />
