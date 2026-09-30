@@ -31,6 +31,8 @@ export const DEFAULT_RENDER: RenderSettings = {
   autoRender: false,
   pauseAfterFailures: 3,
   creditResetHour: 0,
+  pickStrategy: 'balanced',
+  perAccountDailyCap: 0,
 }
 
 export const DEFAULT_REVIEW: ReviewSettings = REVIEW_DEFAULTS // shared so the renderer can fill gaps too

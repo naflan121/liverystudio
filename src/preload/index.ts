@@ -50,6 +50,13 @@ const api = {
   /** After a Check: re-render, move to another account, or cancel; cooldownMinutes rests its current account. */
   renderAct: (jobId: string, action: 'rerender' | 'move' | 'cancel', cooldownMinutes?: number): Promise<boolean> => ipcRenderer.invoke('render:act', jobId, action, cooldownMinutes),
   renderClearCooldown: (id: number): Promise<boolean> => ipcRenderer.invoke('render:clearCooldown', id),
+  // Dola instance manager
+  instanceClearCredits: (id: number): Promise<boolean> => ipcRenderer.invoke('instances:clearCredits', id),
+  instanceResetUsage: (id?: number): Promise<boolean> => ipcRenderer.invoke('instances:resetUsage', id),
+  instanceStart: (id: number): Promise<boolean> => ipcRenderer.invoke('instances:start', id),
+  instanceShow: (id: number): Promise<boolean> => ipcRenderer.invoke('instances:show', id),
+  /** Reserve (never auto-render on) or release an account; returns the updated config. */
+  instanceReserve: (id: number, on: boolean): Promise<AppConfig> => ipcRenderer.invoke('instances:reserve', id, on),
   /** fresh=false re-checks the job's existing Dola chat; fresh=true renders again from scratch. */
   renderRetry: (jobId: string, fresh: boolean): Promise<boolean> => ipcRenderer.invoke('render:retry', { jobId, fresh }),
   renderRemove: (jobId: string): Promise<boolean> => ipcRenderer.invoke('render:remove', jobId),

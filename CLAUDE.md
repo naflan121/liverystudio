@@ -111,6 +111,16 @@ running job is interrupted via `pendingAction` + cancel flag; if its page is fro
 released by force after 60 s. Each run carries a token (`runTokens`); `own()` in runJob stops
 a released run from touching the job or freeing the instance.
 
+**Accounts screen (Dola instance manager, `Instances.tsx`).** Per-account usage lives in meta
+`dola_usage` (render.ts: `recordSend` when a prompt goes out, `recordResult` on done/failed,
+per local day `dayKey()`, 14 days kept; seeded once from past jobs). `pickInstance` with
+`render.pickStrategy` 'balanced' (default) sorts free accounts by renders today, then least
+recently used, then already-running; 'first' = old behaviour. `render.perAccountDailyCap`
+(0 = off) skips an account for the rest of the day. Busy / reserved / cooling-down /
+out-of-credit accounts are always skipped. The screen shows state, today/all-time, ok rate,
+last used, current render, and Start / Show / End cooldown / End credit rest / Reserve / reset.
+No anti-detection work on Dola (user's clients' own accounts, used within their daily credits).
+
 ## What the brain is (inherited from Livery Lab)
 
 **Livery Lab** — a self-learning Electron desktop app that generates

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { DISPLAY, MONO, INFO, GOOD, WARN, BAD, MUTE, INK, LINE, ACCENT, SCREEN, SCREEN_TX } from './ui'
 import type { LogLine, LogLevel, RenderOverview } from '@shared/types'
 
-export type View = 'today' | 'lab' | 'renders' | 'review' | 'history' | 'brain' | 'settings'
+export type View = 'today' | 'lab' | 'renders' | 'review' | 'history' | 'instances' | 'brain' | 'settings'
 export type Theme = 'dark' | 'light' | 'system'
 
 const THEME_KEY = 'studio.theme'
@@ -20,6 +20,7 @@ const ICONS: Record<View, ReactNode> = {
   lab: <><path d="M4 20l4-1 11-11-3-3L5 16l-1 4z" /><path d="M14 6l3 3" /></>,
   renders: <><rect x="3.5" y="5" width="17" height="14" rx="2" /><path d="M10 9.5v5l4.5-2.5z" /></>,
   review: <><path d="M4 12.5l4.5 4.5L20 6" /></>,
+  instances: <><rect x="3.5" y="4.5" width="17" height="6" rx="1.5" /><rect x="3.5" y="13.5" width="17" height="6" rx="1.5" /><path d="M7 7.5h.01M7 16.5h.01" /></>,
   history: <><rect x="4" y="4" width="7" height="7" rx="1.5" /><rect x="13" y="4" width="7" height="7" rx="1.5" /><rect x="4" y="13" width="7" height="7" rx="1.5" /><rect x="13" y="13" width="7" height="7" rx="1.5" /></>,
   brain: <><path d="M12 4.5a3.5 3.5 0 0 0-6.6 1.6A3.3 3.3 0 0 0 4 12a3.4 3.4 0 0 0 2 5.9A3.5 3.5 0 0 0 12 19.5z" /><path d="M12 4.5a3.5 3.5 0 0 1 6.6 1.6A3.3 3.3 0 0 1 20 12a3.4 3.4 0 0 1-2 5.9 3.5 3.5 0 0 1-6 1.6z" /><path d="M12 4.5v15" /></>,
   settings: <><circle cx="12" cy="12" r="3" /><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8" /></>,
@@ -27,7 +28,7 @@ const ICONS: Record<View, ReactNode> = {
 
 const NAV: { group: string; items: { id: View; label: string }[] }[] = [
   { group: '', items: [{ id: 'today', label: 'Today' }] },
-  { group: 'Pipeline', items: [{ id: 'lab', label: 'Create' }, { id: 'renders', label: 'Renders' }, { id: 'review', label: 'Review' }, { id: 'history', label: 'Library' }] },
+  { group: 'Pipeline', items: [{ id: 'lab', label: 'Create' }, { id: 'renders', label: 'Renders' }, { id: 'review', label: 'Review' }, { id: 'history', label: 'Library' }, { id: 'instances', label: 'Accounts' }] },
   { group: 'Engine', items: [{ id: 'brain', label: 'Brain' }, { id: 'settings', label: 'Settings' }] },
 ]
 

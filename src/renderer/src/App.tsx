@@ -4,6 +4,7 @@ import type { AppConfig, Entry, LogLine, RenderJob, RenderOverview } from '@shar
 import { Settings } from './Settings'
 import { Library } from './Library'
 import { Renders, RENDER_META, latestJobByEntry } from './Renders'
+import { Instances } from './Instances'
 import { Review } from './Review'
 import { Shell, loadTheme, applyTheme, type View, type Theme } from './Shell'
 import { Today } from './Today'
@@ -119,6 +120,7 @@ export function App() {
       : view === 'renders' ? rendersView
         : view === 'review' ? reviewView
           : view === 'history' ? historyView
+            : view === 'instances' ? <Instances config={config} onConfig={setConfig} />
             : view === 'brain' ? brainView
               : settingsView
 

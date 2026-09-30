@@ -13,7 +13,7 @@ import { getEntry, getMeta, setMeta } from './db'
 import { notify } from './notify'
 import { listInstances, startInstance, showInstance, waitUntilDrawn, getPage, forget, fillVideoPrompt, sendAndHandleBusy, waitForVideo, readLastReply, Cancelled, NoCreditsError, type CreditsInfo } from './dola/driver'
 import { resolveFallbackApi, downloadFile } from './dola/resolver'
-import type { RenderJob, RenderOverview, DolaInstanceInfo, LogLevel, QueuePause } from '../shared/types'
+import type { RenderJob, RenderOverview, DolaInstanceInfo, LogLevel, QueuePause, InstanceUsage } from '../shared/types'
 
 const BUSY_COOLDOWN_MS = 30 * 60_000
 const MAX_ATTEMPTS = 3
@@ -39,6 +39,43 @@ const pendingAction = new Map<string, JobAction>()
 // frozen page) may no longer touch the job or free the instance.
 const runTokens = new Map<string, number>()
 let tokenSeq = 0
+
+// --- Per-account usage (Dola instance manager) -----------------------------------------
+// Counted at send time, per local day, persisted in meta 'dola_usage'. Drives the balanced
+// picker (fewest renders today first) and the optional per-account daily limit.
+let usage: Record<number, InstanceUsage> = {}
+/** Sortable local day key, e.g. 2026-10-01. */
+const dayKey = (d = new Date()): string => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+function loadUsage(): void {
+  const raw = getMeta('dola_usage')
+  try { usage = JSON.parse(raw || '{}') } catch { usage = {} }
+  if (raw) return
+  // First run: seed the counters from past renders so today's numbers start right.
+  for (const j of jobs) {
+    if (j.instanceId == null || !j.sentAt) continue
+    const u = usageOf(j.instanceId), day = dayKey(new Date(j.sentAt))
+    u.total++; u.days[day] = (u.days[day] ?? 0) + 1
+    if (!u.lastUsed || j.sentAt > u.lastUsed) u.lastUsed = j.sentAt
+    if (j.status === 'done') u.ok++; else if (j.status === 'failed') u.failed++
+  }
+  saveUsage()
+}
+function saveUsage(): void { setMeta('dola_usage', JSON.stringify(usage)) }
+function usageOf(id: number): InstanceUsage { return usage[id] || (usage[id] = { total: 0, ok: 0, failed: 0, days: {} }) }
+const usedToday = (id: number): number => usage[id]?.days[dayKey()] ?? 0
+function recordSend(id: number): void {
+  const u = usageOf(id), day = dayKey()
+  u.total++; u.days[day] = (u.days[day] ?? 0) + 1; u.lastUsed = new Date().toISOString()
+  for (const d of Object.keys(u.days).sort().slice(0, -14)) delete u.days[d] // keep two weeks
+  saveUsage()
+}
+function recordResult(id: number, ok: boolean): void { const u = usageOf(id); if (ok) u.ok++; else u.failed++; saveUsage() }
+function limitReached(id: number): boolean {
+  const lim = getConfig().render.perAccountDailyCap ?? 0
+  return lim > 0 && usedToday(id) >= lim
+}
+/** Reset one account's counters (or all). */
+export function resetUsage(id?: number): void { if (id == null) usage = {}; else delete usage[id]; saveUsage(); save() }
 
 function loadCooldown(): void {
   try { for (const [id, until] of Object.entries(JSON.parse(getMeta('dola_cooldown') || '{}') as Record<string, number>)) if (until > Date.now()) cooldown.set(+id, until) } catch { /* none */ }
@@ -139,6 +176,7 @@ function onNoCredits(job: RenderJob, inst: { id: number; name: string }, info: C
   patch(job, { status: 'queued', tried: [...job.tried, inst.id], chatUrl: undefined, sentAt: undefined, instanceId: undefined, instanceName: undefined, note: `${inst.name} was out of credits; moved to another account` })
 }
 
+export function clearCreditsFor(id: number): void { delete creditsOut[id]; saveCredits(); save(); pump() }
 export function clearCredits(): void { creditsOut = {}; saveCredits(); emitLog('info', 'Dola credit rests cleared.'); save(); pump() }
 let creditsNotifiedUntil = 0
 
@@ -161,6 +199,7 @@ export function initRenderQueue(log: Emit, change: OnChange, refs?: (job: Render
   jobs = getRenderJobs()
   loadCredits()
   loadCooldown()
+  loadUsage()
   // Anything mid-flight when the app last closed: resume waiting if it was already
   // sent (chatUrl known), otherwise put it back in the queue from scratch.
   let resumed = 0, requeued = 0
@@ -184,6 +223,9 @@ export async function overview(): Promise<RenderOverview> {
     const instances: DolaInstanceInfo[] = (await listInstances()).map((i) => ({
       id: i.id, name: i.name, kind: i.kind, status: i.status, isInitialized: i.isInitialized,
       excluded: excl.has(i.id), busy: activeInstances.has(i.id),
+      sentToday: usedToday(i.id), total: usage[i.id]?.total ?? 0, ok: usage[i.id]?.ok ?? 0, failed: usage[i.id]?.failed ?? 0, lastUsed: usage[i.id]?.lastUsed,
+      limitReached: limitReached(i.id) || undefined,
+      currentJob: activeJob.has(i.id) ? getJob(activeJob.get(i.id)!)?.title : undefined,
       cooldownUntil: (cooldown.get(i.id) ?? 0) > Date.now() ? cooldown.get(i.id) : undefined,
       ...(outOfCredits(i.id) ? { creditsOutUntil: creditsOut[i.id].until, creditsNeed: creditsOut[i.id].need, creditsLeft: creditsOut[i.id].left } : {}),
     }))
@@ -311,6 +353,10 @@ export function actOnJob(jobId: string, action: JobAction, cooldownMinutes = 0):
   applyAction(job, action, instId)
 }
 
+/** Instance manager: start a stopped account / bring one on screen in DolaMultiBrowser. */
+export async function startAccount(id: number): Promise<void> { await startInstance(id); save() }
+export async function showAccount(id: number): Promise<void> { await showInstance(id) }
+
 /** Clear a cooldown early (Renders → instances). */
 export function clearCooldown(id: number): void { cooldown.delete(id); setCooldown(id, 0); save(); pump() }
 
@@ -333,8 +379,13 @@ async function pickInstance(job: RenderJob): Promise<{ id: number; name: string;
     return activeInstances.has(inst.id) ? null : inst
   }
   const skip = new Set([...cfg.excludeInstances, ...job.tried.filter((id) => !(creditsOut[id] && !outOfCredits(id)))])
-  const free = all.filter((i) => !skip.has(i.id) && !activeInstances.has(i.id) && (cooldown.get(i.id) ?? 0) < Date.now() && !outOfCredits(i.id))
-  return free.find((i) => i.isInitialized) ?? (cfg.autoStartInstances ? free.find((i) => !i.isInitialized) : undefined) ?? null
+  const free = all.filter((i) => !skip.has(i.id) && !activeInstances.has(i.id) && (cooldown.get(i.id) ?? 0) < Date.now() && !outOfCredits(i.id) && !limitReached(i.id))
+  if (cfg.pickStrategy === 'first') return free.find((i) => i.isInitialized) ?? (cfg.autoStartInstances ? free.find((i) => !i.isInitialized) : undefined) ?? null
+  // Balanced: fewest renders today, then least recently used, then one that's already running.
+  const pool = free.filter((i) => i.isInitialized || cfg.autoStartInstances)
+  const last = (id: number): number => (usage[id]?.lastUsed ? new Date(usage[id].lastUsed!).getTime() : 0)
+  pool.sort((a, b) => usedToday(a.id) - usedToday(b.id) || last(a.id) - last(b.id) || Number(b.isInitialized) - Number(a.isInitialized))
+  return pool[0] ?? null
 }
 
 let pumping = false, repump = false
@@ -376,6 +427,14 @@ async function pump(): Promise<void> {
             const note = `All Dola accounts are out of video credits — continues at ${hhmm(back)}`
             if (job.note !== note) patch(job, { note })
             if (creditsNotifiedUntil !== back) { creditsNotifiedUntil = back; notify('creditsOut', 'Dola accounts are out of video credits', `Renders continue at ${hhmm(back)}, when Dola's daily credits reset.`, 'renders') }
+            continue
+          }
+        }
+        if (!inst && !resuming && (cfg.perAccountDailyCap ?? 0) > 0) {
+          const usable = (await listInstances().catch(() => [])).filter((i) => !cfg.excludeInstances.includes(i.id))
+          if (usable.length && usable.every((i) => limitReached(i.id) || outOfCredits(i.id))) {
+            const note = `Every account has reached its per-account limit (${cfg.perAccountDailyCap}/day) — continues tomorrow`
+            if (job.note !== note) patch(job, { note })
             continue
           }
         }
@@ -437,6 +496,7 @@ async function runJob(job: RenderJob, inst: { id: number; name: string; isInitia
         return sendAndHandleBusy(page, cancelled)
       })
       own({ chatUrl: sent.url })
+      recordSend(inst.id)
       pageFailuresInARow = 0 // the page worked
       if (stale()) throw new Cancelled()
       if (sent.status === 'no_credits') { onNoCredits(job, inst, sent.credits || { text: '' }); return }
@@ -469,6 +529,7 @@ async function runJob(job: RenderJob, inst: { id: number; name: string; isInitia
       instance: inst.name, chatUrl: job.chatUrl, width: v.width, height: v.height, bytes,
       submitted: job.createdAt, saved: new Date().toISOString(),
     }, null, 2))
+    recordResult(inst.id, true)
     own({ status: 'done', file, bytes, width: v.width, height: v.height, endedAt: new Date().toISOString(), note: undefined })
     emitLog('ok', `Video saved: ${path.basename(file)} (${(bytes / 1e6).toFixed(1)} MB)`)
     notify('renderDone', 'Render ready for review', job.title, 'review')
@@ -485,6 +546,7 @@ async function runJob(job: RenderJob, inst: { id: number; name: string; isInitia
     }
     // A failure before the prompt went out doesn't spend today's quota.
     const sentOut = !!job.chatUrl
+    if (sentOut) recordResult(inst.id, false)
     patch(job, { status: 'failed', error: e?.message || String(e), endedAt: new Date().toISOString(), note: undefined, ...(sentOut ? {} : { sentAt: undefined }) })
     emitLog('err', `Render failed for "${job.title}": ${e?.message || e}`)
     notify('renderFailed', 'Render failed', `${job.title} — ${String(e?.message || e).split('\n')[0].slice(0, 120)}`, 'renders')

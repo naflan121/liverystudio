@@ -216,7 +216,14 @@ export interface RenderSettings {
   pauseAfterFailures: number
   /** Local hour (0–23) when Dola's daily video credits come back; out-of-credit accounts rest until then. */
   creditResetHour: number
+  /** How a new render picks its account: 'balanced' = fewest renders today first (spreads work so every account's daily credits get used); 'first' = first free account. */
+  pickStrategy?: 'balanced' | 'first'
+  /** Max renders sent per account per day (0 = no per-account limit; the overall daily cap still applies). */
+  perAccountDailyCap?: number
 }
+
+/** Per-account usage record (Dola instance manager). */
+export interface InstanceUsage { total: number; ok: number; failed: number; lastUsed?: string; days: Record<string, number> }
 
 export type RenderStatus = 'queued' | 'starting' | 'sending' | 'generating' | 'downloading' | 'done' | 'failed' | 'cancelled'
 
@@ -369,6 +376,16 @@ export interface DolaInstanceInfo {
   /** From Dola's message: credits one render needs / credits the account had left. */
   creditsNeed?: number
   creditsLeft?: number
+  /** Usage (instance manager): renders sent today / all time, finished / failed, last send time. */
+  sentToday?: number
+  total?: number
+  ok?: number
+  failed?: number
+  lastUsed?: string
+  /** Hit the per-account daily limit. */
+  limitReached?: boolean
+  /** Title of the render running on it right now. */
+  currentJob?: string
 }
 
 export interface RenderOverview {
