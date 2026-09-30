@@ -19,8 +19,15 @@ Pipeline roadmap:
    step with it). `main/render.ts` = persistent queue (`renders.json`, main-owned),
    daily cap, parallelism, busy cooldown, resume-after-restart via the saved chat URL.
    UI: `renderer/src/Renders.tsx` (+ `RenderStrip` on the lab result), Settings → Render.
-2. **Review**: AI pre-check of each render (frame analysis) + approve/reject with
-   reason tags; rejections feed a fast "render failures" learning loop.
+2. **Review** (done, except 2c): `renderer/src/Review.tsx` + `main/review.ts`.
+   Verdict lives on the RenderJob (`job.review`) and in the append-only `reviews`
+   table; files move to `approved\` / `rejected\` beside where they were rendered.
+   Rejections -> `render-lessons.md` (one Claude call, `RENDER_LESSONS_SYSTEM` in
+   `shared/review.ts`), appended to generation via `withRenderLessons()` in index.ts —
+   never edit prompts.ts for Studio features. Every-take-rejected rule: ask /
+   rerender / rewrite (`Entry.fixOf` chains rewrites; retries counted per chain).
+   **2c (not built):** AI pre-check — ffmpeg frames -> Claude flags issues, pre-fills
+   reasons, sorts the queue.
 3. **Plan**: port AeroPost Pro's slot scoring (`C:\xampp\htdocs\aviation-posting-pro\js\core.js`)
    and have the AI build a posting timetable + per-platform captions for approved clips.
    Posting stays manual (Facebook Page + YouTube).
