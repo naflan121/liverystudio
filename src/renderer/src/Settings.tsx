@@ -203,11 +203,26 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
     try { setMmTest(await window.api.miniMaxTest(mmTestModel)) } finally { setMmTesting(false) }
   }
   // Engine choices per task: Claude models (plus "generation model") and the MiniMax models mcode has.
+  const modelName = (id: string) => id.startsWith('minimax:') ? `MiniMax ${id.slice(8).replace(/^MiniMax-/, '')}` : (MODELS.find((m) => m.id === id)?.label.split(' (')[0] || id)
   const engineOptions = [
-    { value: 'claude:generation', label: `Claude — generation model (${MODELS.find((m) => m.id === c.generationModel)?.label.split(' (')[0] || c.generationModel})` },
+    { value: 'claude:generation', label: `Same as generation model (${modelName(c.generationModel)})` },
     ...MODELS.map((m) => ({ value: `claude:${m.id}`, label: `Claude — ${m.label}` })),
     ...(mm?.models || []).map((m) => ({ value: `minimax:${m.id}`, label: `MiniMax — ${m.id.replace(/^MiniMax-/, '')}${c.ai.minimax.enabled ? '' : ' (MiniMax is off)'}` })),
   ]
+  // Generation / learning: Claude models, plus MiniMax models only when mcode is found
+  // (greyed out until MiniMax is switched on). An unknown saved value is kept visible.
+  const mmReady = !!mm?.installed && c.ai.minimax.enabled
+  const modelSelect = (value: string, onChange: (v: string) => void) => (
+    <select value={value} onChange={(e) => onChange(e.target.value)} style={sel}>
+      {!MODELS.some((m) => m.id === value) && !(mm?.models || []).some((m) => `minimax:${m.id}` === value) && <option value={value}>{value}</option>}
+      <optgroup label="Claude">{MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}</optgroup>
+      {!!mm?.installed && !!mm.models.length && (
+        <optgroup label={mmReady ? 'MiniMax' : 'MiniMax (switch it on below)'}>
+          {mm.models.map((m) => <option key={m.id} value={`minimax:${m.id}`} disabled={!mmReady && value !== `minimax:${m.id}`}>MiniMax — {m.id.replace(/^MiniMax-/, '')}</option>)}
+        </optgroup>
+      )}
+    </select>
+  )
   const isBrain = mode === 'brain'
   const [snipDraft, setSnipDraft] = useState('')
   function addSnippet() {
@@ -348,14 +363,17 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px,1fr))', gap: 14 }}>
               <Field label="Generation model">
-                <select value={c.generationModel} onChange={(e) => set({ generationModel: e.target.value })} style={sel}>{MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}</select>
+                {modelSelect(c.generationModel, (v) => set({ generationModel: v }))}
               </Field>
               <Field label="Learning model">
-                <select value={c.learningModel} onChange={(e) => set({ learningModel: e.target.value })} style={sel}>{MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}</select>
+                {modelSelect(c.learningModel, (v) => set({ learningModel: v }))}
               </Field>
               <Field label="Request timeout (ms)">{num(c.timeoutMs, (n) => set({ timeoutMs: n }))}</Field>
             </div>
-            <div style={{ fontSize: 12, color: MUTE }}>Prompt writing and learning always run on Claude. The smaller jobs below can run on either engine.</div>
+            <div style={{ fontSize: 12, color: MUTE }}>Both can run on Claude or, once MiniMax is switched on and mcode is found, on a MiniMax model. Trend research always uses Claude (it needs web search).</div>
+            {[c.generationModel, c.learningModel].some((m) => m.startsWith('minimax:')) && !c.ai.minimax.enabled && (
+              <div style={{ fontSize: 12.5, color: BAD }}>A MiniMax model is picked above but MiniMax is off — generation/learning will fail until you switch it on below.</div>
+            )}
           </Card>
           )}
 

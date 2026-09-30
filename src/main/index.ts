@@ -9,7 +9,7 @@ import { initPrecheck, queuePrecheck } from './precheck'
 import {
   getConfig, setConfig, getHistory, setHistory, getPlaybook, setPlaybook,
   getPlaybookVersions, appendLearningLog, getLearningLog, resetMemory, dataDir, setDataDir,
-  getTrends, setTrends, getSavedConcepts, setSavedConcepts, importFromLiveryLab, liveryLabDataDir, pullNewFromLab, initStorage, backupStorage, getRenderLessons, setRenderLessons,
+  getTrends, setTrends, getSavedConcepts, DEFAULT_CONFIG, setSavedConcepts, importFromLiveryLab, liveryLabDataDir, pullNewFromLab, initStorage, backupStorage, getRenderLessons, setRenderLessons,
 } from './store'
 import { closeDb, reviewStatsByScenario, rejectReasonCounts, getEntry as getEntryById, insertUsage, usageSummary, precheckAgreement } from './db'
 import { initReview, decide as reviewDecide, undo as reviewUndo, rewriteAndRender, rerender, markUnusable } from './review'
@@ -202,7 +202,26 @@ async function runRoute(route: string, message: string, o: { system: string; lab
   if (engine === 'minimax') {
     return callMiniMax(`${o.system}\n\n---\n\n${message}`, { model, label: o.label, timeoutMs: o.timeoutMs ?? Math.max(cfg.timeoutMs, 120000), onLog: claudeLog })
   }
-  return callClaude(message, { cliPath: cfg.cliPath, model: !model || model === 'generation' ? cfg.generationModel : model, timeoutMs: o.timeoutMs ?? cfg.timeoutMs, system: o.system, label: o.label, onLog: claudeLog })
+  if (!model || model === 'generation') return callModel(cfg.generationModel, message, o)
+  return callClaude(message, { cliPath: cfg.cliPath, model, timeoutMs: o.timeoutMs ?? cfg.timeoutMs, system: o.system, label: o.label, onLog: claudeLog })
+}
+
+// Generation / learning model: a plain Claude id (e.g. 'claude-sonnet-5') or
+// 'minimax:<model id>' (Settings → AI & models). Everything that used to call
+// callClaude with cfg.generationModel / cfg.learningModel goes through here.
+const isMiniMaxModel = (m: string): boolean => /^minimax:/.test(m || '')
+/** A Claude model for calls that need Claude-only features (web tools, CLI test). */
+function claudeOnly(m: string): string { return isMiniMaxModel(m) ? DEFAULT_CONFIG.generationModel : m }
+
+async function callModel(modelSetting: string, message: string, o: { system: string; label: string; timeoutMs?: number }): Promise<string> {
+  const cfg = getConfig()
+  if (isMiniMaxModel(modelSetting)) {
+    const model = modelSetting.slice('minimax:'.length)
+    const text = await callMiniMax(`${o.system}\n\n---\n\n${message}`, { model, label: o.label, timeoutMs: Math.max(o.timeoutMs ?? cfg.timeoutMs, 180000), onLog: claudeLog })
+    // Defensive: strip any reasoning block a MiniMax model leaves in its answer.
+    return text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+  }
+  return callClaude(message, { cliPath: cfg.cliPath, model: modelSetting, timeoutMs: o.timeoutMs ?? cfg.timeoutMs, system: o.system, label: o.label, onLog: claudeLog })
 }
 
 // Livery Studio: the "Reference images" block for a render. Image 1 names the exact
@@ -244,7 +263,7 @@ function registerIpc(): void {
   ipcMain.handle('playbook:set', (_e, text: string) => { setPlaybook(text); return true })
   ipcMain.handle('playbook:versions', () => getPlaybookVersions())
   ipcMain.handle('learning:log', () => getLearningLog())
-  ipcMain.handle('cli:test', () => { const cfg = getConfig(); return testCli(cfg.cliPath, cfg.generationModel) })
+  ipcMain.handle('cli:test', () => { const cfg = getConfig(); return testCli(cfg.cliPath, claudeOnly(cfg.generationModel)) })
   ipcMain.handle('memory:reset', () => { resetMemory(); return true })
   ipcMain.handle('data:open', () => shell.openPath(dataDir()))
   ipcMain.handle('data:getDir', () => dataDir())
@@ -262,7 +281,7 @@ function registerIpc(): void {
     const cfg = getConfig()
     const playbook = getPlaybook()
     const history = getHistory()
-    const base = { cliPath: cfg.cliPath, model: cfg.generationModel, timeoutMs: cfg.timeoutMs, onLog: claudeLog }
+    const gen = (msg: string, label: string) => callModel(cfg.generationModel, msg, { system: SYSTEM, label, timeoutMs: cfg.timeoutMs })
 
     const levers = [
       req.resolved.label,
@@ -309,12 +328,12 @@ function registerIpc(): void {
     const charLimit = req.longPrompt ? longLimit(req) : (req.resolved.charBudget || cfg.charLimit)
     const rewriteTarget = req.longPrompt ? longLimit(req) : (req.resolved.charBudget || cfg.targetMax)
 
-    let text = await callClaude(withRenderLessons(buildUserMessage(req, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends, avoidLines, avoidRecent)), { ...base, system: SYSTEM, label: 'prompt' })
+    let text = await gen(withRenderLessons(buildUserMessage(req, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends, avoidLines, avoidRecent)), 'prompt')
     if (text.length > charLimit) {
       emitLog('warn', `Over limit (${text.length} > ${charLimit}) — asking for a tighter rewrite`)
-      text = await callClaude(
+      text = await gen(
         `This prompt is ${text.length} characters, over the ${charLimit} limit. Rewrite under ${rewriteTarget}, keeping all three sections and every required Negative term. Output only the prompt:\n\n${text}`,
-        { ...base, system: SYSTEM, label: 'rewrite' },
+        'rewrite',
       )
       if (text.length > charLimit) emitLog('warn', `Still over the limit after the rewrite (${text.length} chars) — trim by hand or regenerate.`)
     }
@@ -345,7 +364,6 @@ function registerIpc(): void {
     const history = getHistory()
     const n = Math.min(Math.max(req.candidates || 3, 2), 4)
     req.longPromptChars = cfg.longPromptChars
-    const base = { cliPath: cfg.cliPath, model: cfg.generationModel, timeoutMs: Math.max(cfg.timeoutMs, 240000), onLog: claudeLog }
     emitLog('step', `Generating ${n} candidates in one call — ${req.resolved.label}`)
     const avoidCombos = req.aircraft !== 'placeholder' ? recentCombos(history, req.resolved.id) : []
     const avoidOverused = req.aircraft !== 'placeholder' ? overusedAircraft(history) : []
@@ -356,7 +374,7 @@ function registerIpc(): void {
     const avoidEnvs = req.varyCoverage && (req.env === 'auto' || req.resolved.id === 'cliff_drop') ? recentEnvs(history, req.resolved.id) : []
     const avoidLines = req.resolved.id === 'ramp_glide' ? recentAnnouncerLines(history) : []
     const trends = req.useTrends ? getTrends().text : ''
-    const raw = await callClaude(withRenderLessons(buildUserMessage({ ...req, candidates: n }, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends, avoidLines, avoidRecent)), { ...base, system: SYSTEM, label: 'candidates' })
+    const raw = await callModel(cfg.generationModel, withRenderLessons(buildUserMessage({ ...req, candidates: n }, playbook, cfg.extraNegatives, avoidCombos, avoidEnvs, trends, avoidLines, avoidRecent)), { system: SYSTEM, label: 'candidates', timeoutMs: Math.max(cfg.timeoutMs, 240000) })
     const batchLimit = req.longPrompt ? longLimit(req) : (req.resolved.charBudget || cfg.charLimit)
     const variants = parseVariants(raw).slice(0, n)
     for (const v of variants) {
@@ -427,8 +445,8 @@ function registerIpc(): void {
     const before = getPlaybook()
     emitLog('step', `Learning from a "${entry.reach}" result on ${entry.scenario}…`)
     const system = LEARN_SYSTEM.replace('{BUDGET}', String(cfg.playbookBudget))
-    let next = await callClaude(buildLearnMessage(before, entry, cfg.playbookBudget, getHistory()), {
-      cliPath: cfg.cliPath, model: cfg.learningModel, timeoutMs: cfg.timeoutMs, system, label: 'learn', onLog: claudeLog,
+    let next = await callModel(cfg.learningModel, buildLearnMessage(before, entry, cfg.playbookBudget, getHistory()), {
+      timeoutMs: cfg.timeoutMs, system, label: 'learn',
     })
     // Safety net: if the model overshoots the budget, trim at a line/section
     // boundary (never mid-word) so no lesson is left half-written — and surface
@@ -471,8 +489,8 @@ function registerIpc(): void {
     }
     emitLog('step', `Re-distilling the whole playbook from ${scored.length} scored result(s)…`)
     const system = LEARN_SYSTEM.replace('{BUDGET}', String(cfg.playbookBudget))
-    let next = await callClaude(buildRedistillMessage(scored, cfg.playbookBudget), {
-      cliPath: cfg.cliPath, model: cfg.learningModel, timeoutMs: Math.max(cfg.timeoutMs, 240000), system, label: 'redistill', onLog: claudeLog,
+    let next = await callModel(cfg.learningModel, buildRedistillMessage(scored, cfg.playbookBudget), {
+      timeoutMs: Math.max(cfg.timeoutMs, 240000), system, label: 'redistill',
     })
     if (next.length > cfg.playbookBudget * 1.25) {
       const trimmed = clampPlaybook(next, cfg.playbookBudget)
@@ -491,9 +509,10 @@ function registerIpc(): void {
   ipcMain.handle('trends:refresh', () => exclusive(async () => {
     const cfg = getConfig()
     emitLog('step', 'Researching current trends on the web…')
+    if (isMiniMaxModel(cfg.generationModel)) emitLog('info', `Trend research needs web search, which only Claude has here — using ${claudeOnly(cfg.generationModel)} for this one.`)
     try {
       const text = await callClaude(trendsMsg(), {
-        cliPath: cfg.cliPath, model: cfg.generationModel, timeoutMs: Math.max(cfg.timeoutMs, 180000),
+        cliPath: cfg.cliPath, model: claudeOnly(cfg.generationModel), timeoutMs: Math.max(cfg.timeoutMs, 180000),
         system: TREND_SYSTEM, label: 'trends', onLog: claudeLog, allowedTools: ['WebSearch', 'WebFetch'],
       })
       const saved = setTrends(text)
@@ -513,8 +532,8 @@ function registerIpc(): void {
     const saved = getSavedConcepts()
     const trends = getTrends().text
     emitLog('step', 'Inventing a fresh concept…')
-    const raw = await callClaude(buildConceptMessage(playbook, triedConceptBriefs(history, saved), trends), {
-      cliPath: cfg.cliPath, model: cfg.generationModel, timeoutMs: cfg.timeoutMs, system: CONCEPT_SYSTEM, label: 'concept', onLog: claudeLog,
+    const raw = await callModel(cfg.generationModel, buildConceptMessage(playbook, triedConceptBriefs(history, saved), trends), {
+      timeoutMs: cfg.timeoutMs, system: CONCEPT_SYSTEM, label: 'concept',
     })
     const concept = parseConcept(raw)
     emitLog('ok', `Concept ready: "${concept.label}"`)
@@ -620,7 +639,7 @@ if (!gotLock) {
       emitLog,
       claude: (message, o) => exclusive(() => {
         const cfg = getConfig()
-        return callClaude(message, { cliPath: cfg.cliPath, model: cfg.generationModel, timeoutMs: Math.max(cfg.timeoutMs, 180000), system: o.system, label: o.label, onLog: claudeLog })
+        return callModel(cfg.generationModel, message, { timeoutMs: Math.max(cfg.timeoutMs, 180000), system: o.system, label: o.label })
       }),
       historyChanged: () => { if (win && !win.isDestroyed()) win.webContents.send('history:changed') },
     })

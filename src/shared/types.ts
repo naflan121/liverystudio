@@ -116,7 +116,9 @@ export interface GenerateResult {
 
 export interface AppConfig {
   cliPath: string
+  /** A Claude model id, or 'minimax:<model id>' to run on MiniMax (mcode). */
   generationModel: string
+  /** Same format as generationModel. */
   learningModel: string
   timeoutMs: number
   charLimit: number
@@ -287,7 +289,7 @@ export interface AiSettings {
     /** Stop calling MiniMax for the day after this many tokens (0 = no limit). Protects plan quota and credits. */
     dailyTokenLimit: number
   }
-  /** Which engine writes titles, captions, coverage notes and reference-image names. Prompts + learning stay on Claude. */
+  /** Which engine writes titles, captions, coverage notes and reference-image names. Generation + learning use generationModel / learningModel. */
   routes: { title: EngineRoute; caption: EngineRoute; scene: EngineRoute; refAircraft: EngineRoute }
   precheck: {
     /** Let a MiniMax video model watch each finished render and suggest approve/reject. */

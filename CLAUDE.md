@@ -77,7 +77,12 @@ scratch cwd, `--max-steps` and `--timeout`. No system-prompt flag: instructions 
 top of the input. `--output-schema` fails on M3 (STRUCTURED_OUTPUT_INVALID) — ask for JSON
 in the prompt and parse it (`precheck.ts` parsePrecheck). Settings → AI & models:
 `ai.routes` picks Claude or MiniMax per task (titles, captions, scene, reference naming —
-`runRoute()` in index.ts); prompt writing + learning always stay on Claude.
+`runRoute()` in index.ts). Generation + learning models (Settings → AI & models) can also be
+a MiniMax model: stored as `'minimax:<id>'` in `generationModel` / `learningModel`, and every call
+that used them goes through `callModel()` in index.ts (prompt, rewrite, candidates, concept, learn,
+redistill, review fix-prompt/render lessons, and `claude:generation` routes). Trend research and the
+CLI test stay on Claude (`claudeOnly()`, web tools). MiniMax options show only when mcode is found,
+greyed out until MiniMax is switched on.
 `ai.precheck`: a MiniMax video model (M3) watches each finished render and stores an
 advisory verdict on `job.precheck`; reviews record it (`reviews.precheck`) for the
 agreement stat. Usage rows carry `provider`; `ai.minimax.dailyTokenLimit` caps MiniMax.
