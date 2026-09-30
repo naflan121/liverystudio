@@ -3,7 +3,7 @@ import { INK, PAPER, LINE, MUTE, ACCENT, GOOD, BAD, WAIT, SCREEN, SCREEN_TX, gho
 import { REJECT_REASONS, reasonLabel } from '@shared/review'
 import type { Entry, RenderJob } from '@shared/types'
 
-type Filter = 'awaiting' | 'approved' | 'rejected' | 'all'
+type Filter = 'awaiting' | 'approved' | 'rejected' | 'skipped' | 'all'
 
 const small = { ...ghostBtn, padding: '5px 11px', fontSize: 12.5 }
 
@@ -19,6 +19,7 @@ function when(iso?: string): string {
 function verdictMeta(j: RenderJob): { label: string; color: string } {
   if (j.review?.verdict === 'approved') return { label: 'Approved', color: GOOD }
   if (j.review?.verdict === 'rejected') return { label: 'Rejected', color: BAD }
+  if (j.review?.verdict === 'skipped') return { label: 'Skipped', color: WAIT }
   return { label: 'Awaiting review', color: ACCENT }
 }
 
@@ -52,6 +53,7 @@ export function Review({ entries, jobs, onOpenEntry, onClose }: {
     awaiting: takes.filter((j) => !j.review).length,
     approved: takes.filter((j) => j.review?.verdict === 'approved').length,
     rejected: takes.filter((j) => j.review?.verdict === 'rejected').length,
+    skipped: takes.filter((j) => j.review?.verdict === 'skipped').length,
     all: takes.length,
   }), [takes])
   const list = useMemo(() => {
@@ -82,6 +84,13 @@ export function Review({ entries, jobs, onOpenEntry, onClose }: {
     if (await run(() => window.api.reviewDecide(id, 'approved', [], comment))) { if (filter === 'awaiting') setSelId(nextAwaiting(id)) }
   }
 
+  // Out of the queue without a verdict (e.g. couldn't post it): the file stays put, nothing is learned.
+  async function skip(): Promise<void> {
+    if (!sel || busy) return
+    const id = sel.id
+    if (await run(() => window.api.reviewDecide(id, 'skipped', [], comment))) { if (filter === 'awaiting') setSelId(nextAwaiting(id)) }
+  }
+
   async function reject(): Promise<void> {
     if (!sel || busy) return
     if (!reasons.length && !comment.trim()) { setErr('Pick at least one reason or write a comment — it is what the learning uses.'); return }
@@ -106,6 +115,7 @@ export function Review({ entries, jobs, onOpenEntry, onClose }: {
     const i = list.findIndex((j) => j.id === sel.id)
     if (e.key === 'a' || e.key === 'A') { if (!sel.review) { e.preventDefault(); approve() } }
     else if (e.key === 'r' || e.key === 'R') { if (!sel.review) { e.preventDefault(); setRejecting(true) } }
+    else if (e.key === 's' || e.key === 'S') { if (!sel.review) { e.preventDefault(); skip() } }
     else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); if (list[i + 1]) setSelId(list[i + 1].id) }
     else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); if (list[i - 1]) setSelId(list[i - 1].id) }
     else if (e.key === 'Escape') setRejecting(false)
@@ -134,16 +144,16 @@ export function Review({ entries, jobs, onOpenEntry, onClose }: {
             <div style={{ fontSize: 22, fontWeight: 600 }}>Review renders</div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <span style={{ fontSize: 12, color: MUTE }}>Keys: <b>A</b> approve · <b>R</b> reject · <b>← →</b> move</span>
+            <span style={{ fontSize: 12, color: MUTE }}>Keys: <b>A</b> approve · <b>R</b> reject · <b>S</b> skip · <b>← →</b> move</span>
             <button onClick={() => window.api.renderOpenOutput()} style={ghostBtn}>Open video folder</button>
             <button onClick={onClose} style={ghostBtn}>Back to lab</button>
           </div>
         </div>
 
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {(['awaiting', 'approved', 'rejected', 'all'] as Filter[]).map((f) => (
+          {(['awaiting', 'approved', 'rejected', 'skipped', 'all'] as Filter[]).map((f) => (
             <button key={f} onClick={() => { setFilter(f); setSelId(null) }} style={{ ...small, background: filter === f ? INK : '#fff', color: filter === f ? '#fff' : INK, borderColor: filter === f ? INK : LINE }}>
-              {f === 'awaiting' ? 'Awaiting review' : f === 'approved' ? 'Approved' : f === 'rejected' ? 'Rejected' : 'All'} · {counts[f]}
+              {f === 'awaiting' ? 'Awaiting review' : f === 'approved' ? 'Approved' : f === 'rejected' ? 'Rejected' : f === 'skipped' ? 'Skipped' : 'All'} · {counts[f]}
             </button>
           ))}
         </div>
@@ -188,7 +198,7 @@ export function Review({ entries, jobs, onOpenEntry, onClose }: {
                   <div style={{ border: `1px solid ${verdictMeta(sel).color}`, borderRadius: 12, padding: '12px 14px', background: '#fff', display: 'grid', gap: 8 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                       <span style={{ fontWeight: 700, color: verdictMeta(sel).color }}>{verdictMeta(sel).label}</span>
-                      <span style={{ fontSize: 12, color: MUTE }}>{when(sel.review.at)} · moved to {sel.review.verdict}\</span>
+                      <span style={{ fontSize: 12, color: MUTE }}>{when(sel.review.at)} · {sel.review.verdict === 'skipped' ? 'left in the video folder' : `moved to ${sel.review.verdict}\\`}</span>
                       <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
                         <button disabled={busy} onClick={() => run(() => window.api.reviewUndo(sel.id))} style={small}>Undo</button>
                         <button onClick={() => window.api.renderShowFile(sel.file!)} style={small}>Show file</button>
@@ -203,6 +213,7 @@ export function Review({ entries, jobs, onOpenEntry, onClose }: {
                       <button disabled={busy} onClick={approve} style={{ flex: 1, background: GOOD, color: '#fff', border: 'none', borderRadius: 10, padding: '12px 16px', fontSize: 15, fontWeight: 600, cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>Approve <span style={{ opacity: 0.7, fontSize: 12 }}>A</span></button>
                       <button disabled={busy} onClick={() => setRejecting((r) => !r)} style={{ flex: 1, background: rejecting ? BAD : '#fff', color: rejecting ? '#fff' : BAD, border: `1px solid ${BAD}`, borderRadius: 10, padding: '12px 16px', fontSize: 15, fontWeight: 600, cursor: 'pointer' }}>Reject… <span style={{ opacity: 0.7, fontSize: 12 }}>R</span></button>
                     </div>
+                    <button disabled={busy} onClick={skip} title="Take it out of Awaiting review without approving or rejecting (e.g. you couldn't post it). The file stays where it is and nothing is learned." style={{ background: 'transparent', color: MUTE, border: `1px dashed ${LINE}`, borderRadius: 10, padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Skip — neither approve nor reject <span style={{ opacity: 0.7, fontSize: 12 }}>S</span></button>
                     {rejecting && (
                       <div style={{ border: `1px solid ${BAD}`, borderRadius: 12, padding: '12px 14px', background: '#fff', display: 'grid', gap: 10 }}>
                         <div style={{ ...lbl, marginBottom: 0 }}>What went wrong?</div>
@@ -272,7 +283,7 @@ export function Review({ entries, jobs, onOpenEntry, onClose }: {
                     </div>
                   </div>
                 )}
-                <div style={{ fontSize: 11.5, color: WAIT }}>Approved takes move to <code>approved\</code>, rejected to <code>rejected\</code> inside the video folder. Undo moves them back.</div>
+                <div style={{ fontSize: 11.5, color: WAIT }}>Approved takes move to <code>approved\</code>, rejected to <code>rejected\</code> inside the video folder; skipped ones stay put. Undo moves them back.</div>
               </div>
             </div>
           )}

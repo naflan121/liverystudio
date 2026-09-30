@@ -241,7 +241,8 @@ export interface RenderJob {
   auto?: 'rerender' | 'rewrite'
 }
 
-export type ReviewVerdict = 'approved' | 'rejected'
+/** 'skipped' = out of the review queue without a verdict (e.g. couldn't post it): file stays put, no learning. */
+export type ReviewVerdict = 'approved' | 'rejected' | 'skipped'
 
 export interface JobReview {
   verdict: ReviewVerdict

@@ -28,7 +28,9 @@ let deps: Deps
 
 export function initReview(d: Deps): void { deps = d }
 
-const VERDICT_DIR: Record<ReviewVerdict, string> = { approved: 'approved', rejected: 'rejected' }
+// A skipped take stays where it was rendered.
+const VERDICT_DIR: Record<'approved' | 'rejected', string> = { approved: 'approved', rejected: 'rejected' }
+const targetDir = (file: string, verdict: ReviewVerdict): string => verdict === 'skipped' ? baseDir(file) : path.join(baseDir(file), VERDICT_DIR[verdict])
 
 /** The folder the take was rendered into (strips an approved/ or rejected/ level). */
 function baseDir(file: string): string {
@@ -77,13 +79,13 @@ export function decide(jobId: string, verdict: ReviewVerdict, reasons: string[],
   if (!job || job.status !== 'done' || !job.file) throw new Error('Only a finished render can be reviewed.')
   const at = new Date().toISOString()
   if (job.review) undoLatestReview(job.id, at) // changing a verdict supersedes the old row
-  const file = moveTake(job.file, path.join(baseDir(job.file), VERDICT_DIR[verdict]))
+  const file = moveTake(job.file, targetDir(job.file, verdict))
   const review: JobReview = { verdict, reasons: verdict === 'rejected' ? reasons : [], comment: comment.trim(), at }
   updateJob(job.id, { file, review })
   writeSidecarReview(file, review)
   const entry = getEntry(job.entryId)
   insertReview({ jobId: job.id, entryId: job.entryId, verdict, reasons: review.reasons, comment: review.comment, scenarioId: entry?.scenarioId, instance: job.instanceName, at })
-  deps.emitLog(verdict === 'approved' ? 'ok' : 'warn', `${verdict === 'approved' ? 'Approved' : 'Rejected'}: "${job.title}"${review.reasons.length ? ` — ${review.reasons.map(reasonLabel).join(', ')}` : ''}`)
+  deps.emitLog(verdict === 'rejected' ? 'warn' : verdict === 'approved' ? 'ok' : 'info', `${verdict === 'approved' ? 'Approved' : verdict === 'rejected' ? 'Rejected' : 'Skipped'}: "${job.title}"${review.reasons.length ? ` — ${review.reasons.map(reasonLabel).join(', ')}` : ''}`)
 
   if (verdict === 'rejected') {
     const cfg = getConfig().review
