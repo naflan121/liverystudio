@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
-import type { AppConfig, Entry, LearningLogEntry, RenderJob, RenderSettings, ReviewSettings, SavedConcept } from '../shared/types'
+import type { AppConfig, Entry, LearningLogEntry, RenderJob, RenderSettings, ReviewSettings, NotifySettings, SavedConcept } from '../shared/types'
 import {
   getDb, migrateFromJson, backupDb, loadEntries, getEntry, upsertEntries, countEntries, clearEntries,
   loadRenderJobs, syncRenderJobs,
@@ -29,9 +29,20 @@ export const DEFAULT_RENDER: RenderSettings = {
   waitMinutes: 25,
   autoStartInstances: true,
   autoRender: false,
+  pauseAfterFailures: 3,
 }
 
 export const DEFAULT_REVIEW: ReviewSettings = REVIEW_DEFAULTS // shared so the renderer can fill gaps too
+
+export const DEFAULT_NOTIFY: NotifySettings = {
+  enabled: true,
+  onlyWhenUnfocused: true,
+  renderDone: true,
+  renderFailed: true,
+  capReached: true,
+  queuePaused: true,
+  autoRetry: false,
+}
 
 export const DEFAULT_CONFIG: AppConfig = {
   cliPath: '',
@@ -63,6 +74,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   },
   render: DEFAULT_RENDER,
   review: DEFAULT_REVIEW,
+  notify: DEFAULT_NOTIFY,
 }
 
 function readJson<T>(file: string, fallback: T): T {
@@ -234,6 +246,7 @@ export function getConfig(): AppConfig {
     defaults: { ...DEFAULT_CONFIG.defaults, ...(stored.defaults || {}) },
     render: { ...DEFAULT_RENDER, ...(stored.render || {}) },
     review: { ...DEFAULT_REVIEW, ...(stored.review || {}) },
+    notify: { ...DEFAULT_NOTIFY, ...(stored.notify || {}) },
   }
 }
 
@@ -243,6 +256,7 @@ export function setConfig(patch: Partial<AppConfig>): AppConfig {
   if (patch.defaults) next.defaults = { ...cur.defaults, ...patch.defaults }
   if (patch.render) next.render = { ...cur.render, ...patch.render }
   if (patch.review) next.review = { ...cur.review, ...patch.review }
+  if (patch.notify) next.notify = { ...cur.notify, ...patch.notify }
   writeJson(p('config.json'), next)
   return next
 }

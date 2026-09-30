@@ -13,7 +13,7 @@ import { app } from 'electron'
 import Database from 'better-sqlite3'
 import fs from 'node:fs'
 import path from 'node:path'
-import type { Entry, RenderJob } from '../shared/types'
+import type { Entry, RenderJob, UsageRow } from '../shared/types'
 
 let db: Database.Database | null = null
 
@@ -55,6 +55,22 @@ const MIGRATIONS: string[] = [
    );
    CREATE INDEX reviews_job ON reviews(job_id);
    CREATE INDEX reviews_entry ON reviews(entry_id);`,
+  // v3 — one row per Claude CLI call (the CLI reports API-equivalent cost + tokens)
+  `CREATE TABLE usage (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     at TEXT NOT NULL,
+     day TEXT NOT NULL,
+     label TEXT NOT NULL,
+     model TEXT NOT NULL,
+     ok INTEGER NOT NULL,
+     cost_usd REAL NOT NULL DEFAULT 0,
+     input_tokens INTEGER NOT NULL DEFAULT 0,
+     output_tokens INTEGER NOT NULL DEFAULT 0,
+     cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+     cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+     duration_ms INTEGER NOT NULL DEFAULT 0
+   );
+   CREATE INDEX usage_day ON usage(day);`,
 ]
 
 export function dbPath(): string {
@@ -183,6 +199,42 @@ export function reviewStatsByScenario(): ReviewStatRow[] {
 export function rejectReasonCounts(): { reason: string; n: number }[] {
   return getDb().prepare(`SELECT j.value reason, COUNT(*) n FROM reviews, json_each(reviews.reasons) j
     WHERE verdict = 'rejected' AND undone_at IS NULL GROUP BY j.value ORDER BY n DESC`).all() as { reason: string; n: number }[]
+}
+
+// --- usage (Claude CLI calls) -------------------------------------------------------
+
+export interface UsageRecord {
+  label: string
+  model: string
+  ok: boolean
+  costUsd: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  durationMs: number
+}
+
+const localDayKey = (d: Date): string => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+export function insertUsage(u: UsageRecord): void {
+  const now = new Date()
+  getDb().prepare(`INSERT INTO usage (at, day, label, model, ok, cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, duration_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(now.toISOString(), localDayKey(now), u.label, u.model, u.ok ? 1 : 0, u.costUsd, u.inputTokens, u.outputTokens, u.cacheReadTokens, u.cacheWriteTokens, u.durationMs)
+}
+
+
+/** Totals per label for one local day, and per day for the last `days` days. */
+export function usageSummary(days: number): { today: UsageRow[]; byDay: UsageRow[]; byModelToday: UsageRow[] } {
+  const d = getDb()
+  const today = localDayKey(new Date())
+  const since = localDayKey(new Date(Date.now() - (days - 1) * 86400000))
+  const cols = `COUNT(*) calls, COALESCE(SUM(cost_usd),0) costUsd, COALESCE(SUM(input_tokens),0) inputTokens, COALESCE(SUM(output_tokens),0) outputTokens, COALESCE(SUM(cache_read_tokens + cache_write_tokens),0) cacheTokens`
+  return {
+    today: d.prepare(`SELECT label key, ${cols} FROM usage WHERE day = ? GROUP BY label ORDER BY costUsd DESC`).all(today) as UsageRow[],
+    byModelToday: d.prepare(`SELECT model key, ${cols} FROM usage WHERE day = ? GROUP BY model ORDER BY costUsd DESC`).all(today) as UsageRow[],
+    byDay: d.prepare(`SELECT day key, ${cols} FROM usage WHERE day >= ? GROUP BY day ORDER BY day`).all(since) as UsageRow[],
+  }
 }
 
 // --- one-time import of the JSON files this app used before SQLite ---------------

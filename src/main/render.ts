@@ -9,10 +9,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { getConfig, getRenderJobs, setRenderJobs } from './store'
-import { getEntry } from './db'
+import { getEntry, getMeta, setMeta } from './db'
+import { notify } from './notify'
 import { listInstances, startInstance, showInstance, waitUntilDrawn, getPage, forget, fillVideoPrompt, sendAndHandleBusy, waitForVideo, Cancelled } from './dola/driver'
 import { resolveFallbackApi, downloadFile } from './dola/resolver'
-import type { RenderJob, RenderOverview, DolaInstanceInfo, LogLevel } from '../shared/types'
+import type { RenderJob, RenderOverview, DolaInstanceInfo, LogLevel, QueuePause } from '../shared/types'
 
 const BUSY_COOLDOWN_MS = 30 * 60_000
 const MAX_ATTEMPTS = 3
@@ -50,6 +51,45 @@ function withScreen<T>(fn: () => Promise<T>): Promise<T> {
   return run
 }
 
+// --- Pause + Dola page guard ------------------------------------------------------
+// Failures ON the Dola page while sending (missing elements, buttons that never enable,
+// locator timeouts) usually mean Dola changed its page. After cfg.pauseAfterFailures of
+// them in a row, new sends pause so the day's cap isn't burned on a broken page. Jobs
+// already sent keep waiting/downloading. Any successful send resets the count.
+const PAGE_ERROR = /locator|waitFor|Timeout \d+ms exceeded|send button|Could not switch Dola model|not being drawn|strict mode violation|Target (page|closed)|Execution context was destroyed/i
+let pageFailuresInARow = 0
+
+export function getPause(): QueuePause | null {
+  try { const v = getMeta('queue_paused'); return v ? JSON.parse(v) as QueuePause : null } catch { return null }
+}
+
+export function pauseQueue(reason: string, auto = false): void {
+  setMeta('queue_paused', JSON.stringify({ reason, at: new Date().toISOString(), auto } satisfies QueuePause))
+  emitLog('warn', `Sending to Dola paused: ${reason}`)
+  save()
+}
+
+export function resumeQueue(): void {
+  setMeta('queue_paused', '')
+  pageFailuresInARow = 0
+  emitLog('ok', 'Sending to Dola resumed.')
+  save()
+  pump()
+}
+
+function notePageFailure(message: string): void {
+  if (!PAGE_ERROR.test(message)) return
+  pageFailuresInARow++
+  const limit = getConfig().render.pauseAfterFailures
+  if (limit > 0 && pageFailuresInARow >= limit && !getPause()) {
+    const reason = `${pageFailuresInARow} renders in a row failed on the Dola page itself — Dola may have changed its page. Last error: ${message.split('\n')[0].slice(0, 160)}`
+    pauseQueue(reason, true)
+    notify('queuePaused', 'Livery Studio paused sending', 'Several renders failed on the Dola page in a row. Check Dola, then resume in Renders.', 'renders')
+  }
+}
+
+let capNotifiedDay = ''
+
 const localDay = (d: Date): string => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
 
 /** Renders sent to Dola today (local time) — what the daily cap counts. */
@@ -80,7 +120,7 @@ export function listJobs(): RenderJob[] { return jobs }
 
 export async function overview(): Promise<RenderOverview> {
   const cfg = getConfig().render
-  const base = { jobs, sentToday: sentToday(), dailyCap: cfg.dailyCap }
+  const base = { jobs, sentToday: sentToday(), dailyCap: cfg.dailyCap, paused: getPause() }
   try {
     const excl = new Set(cfg.excludeInstances)
     const instances: DolaInstanceInfo[] = (await listInstances()).map((i) => ({
@@ -177,13 +217,21 @@ async function pump(): Promise<void> {
     do {
       repump = false
       const cfg = getConfig().render
+      const paused = getPause()
       for (const job of [...jobs].reverse()) { // oldest first
         if (job.status !== 'queued') continue
         const resuming = !!job.chatUrl
+        if (paused && !resuming) {
+          const note = 'Sending paused — resume it on the Renders page'
+          if (job.note !== note) patch(job, { note })
+          continue
+        }
         if (cfg.maxParallel > 0 && activeInstances.size >= cfg.maxParallel) break
         if (!resuming && sentToday() >= cfg.dailyCap) {
           const note = `Daily cap reached (${cfg.dailyCap}/day) — continues tomorrow`
           if (job.note !== note) patch(job, { note })
+          const day = localDay(new Date())
+          if (capNotifiedDay !== day) { capNotifiedDay = day; notify('capReached', 'Daily render cap reached', `${cfg.dailyCap} renders sent today. Queued prompts continue tomorrow.`, 'renders') }
           continue
         }
         let inst
@@ -241,6 +289,7 @@ async function runJob(job: RenderJob, inst: { id: number; name: string; isInitia
         return sendAndHandleBusy(page, cancelled)
       })
       patch(job, { chatUrl: sent.url })
+      pageFailuresInARow = 0 // the page worked
       if (sent.status === 'still_busy') {
         cooldown.set(inst.id, Date.now() + BUSY_COOLDOWN_MS)
         const tried = [...job.tried, inst.id]
@@ -272,6 +321,7 @@ async function runJob(job: RenderJob, inst: { id: number; name: string; isInitia
     }, null, 2))
     patch(job, { status: 'done', file, bytes, width: v.width, height: v.height, endedAt: new Date().toISOString(), note: undefined })
     emitLog('ok', `Video saved: ${path.basename(file)} (${(bytes / 1e6).toFixed(1)} MB)`)
+    notify('renderDone', 'Render ready for review', job.title, 'review')
   } catch (e: any) {
     if (e instanceof Cancelled) {
       patch(job, { status: 'cancelled', endedAt: new Date().toISOString(), note: undefined })
@@ -282,6 +332,8 @@ async function runJob(job: RenderJob, inst: { id: number; name: string; isInitia
     const sentOut = !!job.chatUrl
     patch(job, { status: 'failed', error: e?.message || String(e), endedAt: new Date().toISOString(), note: undefined, ...(sentOut ? {} : { sentAt: undefined }) })
     emitLog('err', `Render failed for "${job.title}": ${e?.message || e}`)
+    notify('renderFailed', 'Render failed', `${job.title} — ${String(e?.message || e).split('\n')[0].slice(0, 120)}`, 'renders')
+    if (!sentOut) notePageFailure(String(e?.message || e))
     forget(inst.id)
   }
 }

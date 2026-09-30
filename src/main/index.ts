@@ -2,17 +2,18 @@ import { app, shell, dialog, BrowserWindow, ipcMain, protocol } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import { Readable } from 'node:stream'
-import { callClaude, testCli } from './claude'
+import { callClaude, testCli, setUsageSink } from './claude'
+import { initNotify, notify } from './notify'
 import {
   getConfig, setConfig, getHistory, setHistory, getPlaybook, setPlaybook,
   getPlaybookVersions, appendLearningLog, getLearningLog, resetMemory, dataDir, setDataDir,
   getTrends, setTrends, getSavedConcepts, setSavedConcepts, importFromLiveryLab, liveryLabDataDir, pullNewFromLab, initStorage, backupStorage, getRenderLessons, setRenderLessons,
 } from './store'
-import { closeDb, reviewStatsByScenario, rejectReasonCounts, getEntry as getEntryById } from './db'
+import { closeDb, reviewStatsByScenario, rejectReasonCounts, getEntry as getEntryById, insertUsage, usageSummary } from './db'
 import { initReview, decide as reviewDecide, undo as reviewUndo, rewriteAndRender, rerender, markUnusable } from './review'
 import { renderLessonsBlock } from '../shared/review'
 import { buildReferenceBlock, fillImage1 } from '../shared/references'
-import { initRenderQueue, overview as renderOverview, submit as renderSubmit, cancel as renderCancel, retry as renderRetry, remove as renderRemove, listJobs, updateJob } from './render'
+import { initRenderQueue, overview as renderOverview, submit as renderSubmit, cancel as renderCancel, retry as renderRetry, remove as renderRemove, listJobs, updateJob, pauseQueue, resumeQueue } from './render'
 import { SYSTEM, TITLE_SYSTEM, LEARN_SYSTEM, EXTRACT_SYSTEM, TREND_SYSTEM, CAPTION_SYSTEM, CONCEPT_SYSTEM, longLimit, buildUserMessage, titleMsg, captionMsg, buildLearnMessage, buildRedistillMessage, buildConceptMessage, extractMsg, parseScene, parseConcept, trendsMsg, parseVariants } from '../shared/prompts'
 import { cleanTitle, toFilename, clampPlaybook } from '../shared/util'
 import { overusedOperators } from '../shared/brain'
@@ -513,6 +514,10 @@ function registerIpc(): void {
   }))
   // --- Livery Studio: render pipeline (Dola / Seedance) ---------------------------
   ipcMain.handle('render:overview', () => renderOverview())
+  ipcMain.handle('render:pause', () => { pauseQueue('Paused by you.', false); return true })
+  ipcMain.handle('render:resume', () => { resumeQueue(); return true })
+  ipcMain.handle('usage:summary', (_e, days: number) => usageSummary(Math.max(1, Math.min(90, days || 14))))
+  ipcMain.handle('notify:test', () => notify('test', 'Livery Studio notifications work', 'This is how render, failure and pause alerts will look.', 'today', true))
   ipcMain.handle('render:submit', (_e, entryIds: number[], opts?: { references?: boolean }) => entryIds.map((id) => renderSubmit(id, opts || {})))
   ipcMain.handle('render:cancel', (_e, jobId: string) => { renderCancel(jobId); return true })
   ipcMain.handle('render:retry', (_e, payload: { jobId: string; fresh: boolean }) => { renderRetry(payload.jobId, payload.fresh); return true })
@@ -579,8 +584,13 @@ if (!gotLock) {
   })
 
   app.whenReady().then(() => {
+    // Toasts are grouped under this id in Windows (without it, dev builds show "electron.app.Electron").
+    app.setAppUserModelId('com.sholacase.liverystudio')
     // Open SQLite; the first time, it imports the old history.json / renders.json.
     const migrated = initStorage()
+    // Usage meter: every Claude CLI call records its reported cost + tokens.
+    setUsageSink((u) => { try { insertUsage(u) } catch { /* never break a call over metering */ } })
+    initNotify(() => win)
     // First run: seed the brain (playbook, history, concepts…) from Livery Lab. Copy only.
     const imported = importFromLiveryLab()
     registerMediaProtocol()

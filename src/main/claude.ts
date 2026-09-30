@@ -17,6 +17,37 @@ export interface ClaudeOptions {
   allowedTools?: string[]
 }
 
+export interface CallUsage {
+  label: string
+  model: string
+  ok: boolean
+  costUsd: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  durationMs: number
+}
+
+// Every CLI call reports here (the usage meter). Set once by the main process.
+let usageSink: (u: CallUsage) => void = () => { /* not wired */ }
+export function setUsageSink(fn: (u: CallUsage) => void): void { usageSink = fn }
+
+function reportUsage(opts: ClaudeOptions, ok: boolean, started: number, json: any): void {
+  try {
+    const u = json?.usage || {}
+    usageSink({
+      label: opts.label || 'other', model: opts.model, ok,
+      costUsd: Number(json?.total_cost_usd ?? json?.cost_usd ?? 0) || 0,
+      inputTokens: Number(u.input_tokens ?? 0) || 0,
+      outputTokens: Number(u.output_tokens ?? 0) || 0,
+      cacheReadTokens: Number(u.cache_read_input_tokens ?? 0) || 0,
+      cacheWriteTokens: Number(u.cache_creation_input_tokens ?? 0) || 0,
+      durationMs: Number(json?.duration_ms ?? Date.now() - started) || 0,
+    })
+  } catch { /* metering must never break a call */ }
+}
+
 /**
  * Extract the CLI's JSON result envelope from stdout. The CLI (or an MCP
  * server it loads) can print stray diagnostic lines to stdout alongside the
@@ -138,10 +169,12 @@ export function callClaude(userContent: string, opts: ClaudeOptions): Promise<st
       const secs = ((Date.now() - started) / 1000).toFixed(1)
       if (code !== 0 && !out.trim()) {
         log('err', `${tag}CLI exited with code ${code} after ${secs}s.`)
+        reportUsage(opts, false, started, null)
         reject(new Error(err.trim() || `Claude CLI exited with code ${code}.`))
         return
       }
       const json = parseEnvelope(out)
+      reportUsage(opts, !!json && !json.is_error, started, json)
       if (json) {
         if (json.is_error) {
           log('err', `${tag}Model returned an error after ${secs}s.`)

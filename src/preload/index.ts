@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
-  AppConfig, Entry, GenerateRequest, GenerateResult, LearningLogEntry, CliTestResult, LogLine, SavedConcept, RenderJob, RenderOverview, ReviewVerdict,
+  AppConfig, Entry, GenerateRequest, GenerateResult, LearningLogEntry, CliTestResult, LogLine, SavedConcept, RenderJob, RenderOverview, ReviewVerdict, UsageRow,
 } from '../shared/types'
 
 const api = {
@@ -71,6 +71,17 @@ const api = {
     const handler = (): void => cb()
     ipcRenderer.on('history:changed', handler)
     return () => { ipcRenderer.removeListener('history:changed', handler) }
+  },
+  // --- Livery Studio: queue pause, usage meter, notifications ---
+  renderPause: (): Promise<boolean> => ipcRenderer.invoke('render:pause'),
+  renderResume: (): Promise<boolean> => ipcRenderer.invoke('render:resume'),
+  usageSummary: (days: number): Promise<{ today: UsageRow[]; byDay: UsageRow[]; byModelToday: UsageRow[] }> => ipcRenderer.invoke('usage:summary', days),
+  testNotification: (): Promise<boolean> => ipcRenderer.invoke('notify:test'),
+  /** A clicked notification asks the window to open a screen. */
+  onNav: (cb: (view: string) => void): (() => void) => {
+    const handler = (_e: unknown, view: string): void => cb(view)
+    ipcRenderer.on('nav', handler)
+    return () => { ipcRenderer.removeListener('nav', handler) }
   },
   getLabDataDir: (): Promise<string> => ipcRenderer.invoke('brain:labDir'),
   /** Subscribe to real-time activity log lines. Returns an unsubscribe fn. */

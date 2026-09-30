@@ -145,6 +145,8 @@ export interface AppConfig {
   render: RenderSettings
   /** Livery Studio: review of rendered videos + learning from rejections. */
   review: ReviewSettings
+  /** Livery Studio: which Windows notifications to show. */
+  notify: NotifySettings
 }
 
 export interface LearningLogEntry {
@@ -202,6 +204,8 @@ export interface RenderSettings {
   autoStartInstances: boolean
   /** Queue a render automatically for every newly generated prompt. */
   autoRender: boolean
+  /** Pause sending after this many renders in a row fail on the Dola page itself (0 = never). */
+  pauseAfterFailures: number
 }
 
 export type RenderStatus = 'queued' | 'starting' | 'sending' | 'generating' | 'downloading' | 'done' | 'failed' | 'cancelled'
@@ -260,6 +264,31 @@ export interface JobReview {
 /** What to do when every rendered take of a prompt has been rejected. */
 export type AllRejectedAction = 'ask' | 'rerender' | 'rewrite'
 
+export interface NotifySettings {
+  /** Master switch. */
+  enabled: boolean
+  /** Only when the Studio window isn't the one you're looking at. */
+  onlyWhenUnfocused: boolean
+  /** A render finished and is waiting for review. */
+  renderDone: boolean
+  /** A render failed. */
+  renderFailed: boolean
+  /** Today's render cap is used up. */
+  capReached: boolean
+  /** Sending was paused because Dola's page looks different (several page failures in a row). */
+  queuePaused: boolean
+  /** The Studio re-rendered or rewrote a prompt by itself after every take was rejected. */
+  autoRetry: boolean
+}
+
+/** Why sending to Dola is paused (null/absent = running). */
+export interface QueuePause {
+  reason: string
+  at: string
+  /** true = paused automatically by the Dola page guard; false = paused by you. */
+  auto: boolean
+}
+
 export interface ReviewSettings {
   /** After each rejection, one Claude call folds the reasons into the render-lessons memory. */
   learnFromRejections: boolean
@@ -284,6 +313,8 @@ export interface DolaInstanceInfo {
 }
 
 export interface RenderOverview {
+  /** Set while sending is paused (by you or by the Dola page guard). */
+  paused?: QueuePause | null
   jobs: RenderJob[]
   sentToday: number
   dailyCap: number
@@ -291,3 +322,6 @@ export interface RenderOverview {
   instances: DolaInstanceInfo[] | null
   error?: string
 }
+
+/** Usage meter: totals for one key (a call label, a model, or a day). */
+export interface UsageRow { key: string; calls: number; costUsd: number; inputTokens: number; outputTokens: number; cacheTokens: number }

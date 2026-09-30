@@ -10,6 +10,7 @@ import path from 'node:path'
 import { getConfig, getRenderLessons, setRenderLessons } from './store'
 import { getEntry, upsertEntries, insertReview, undoLatestReview } from './db'
 import { getJob, updateJob, listJobs, submit } from './render'
+import { notify } from './notify'
 import { SYSTEM, longLimit } from '../shared/prompts'
 import { SCENARIOS } from '../shared/domain'
 import { clampPlaybook } from '../shared/util'
@@ -158,8 +159,10 @@ async function applyAllRejectedRule(entryId: number): Promise<void> {
   if (cfg.onAllRejected === 'rerender') {
     deps.emitLog('step', `Every take rejected — re-rendering "${entry.title || entry.scenario}" automatically (${used + 1}/${cfg.maxAutoRetries}).`)
     submit(entryId, { auto: 'rerender' })
+    notify('autoRetry', 'Re-rendering automatically', `Every take of "${entry.title || entry.scenario}" was rejected.`, 'renders')
   } else {
     await rewriteAndRender(entryId, true)
+    notify('autoRetry', 'Prompt rewritten and re-rendering', `Every take of "${entry.title || entry.scenario}" was rejected; a fixed prompt is rendering.`, 'renders')
   }
 }
 
