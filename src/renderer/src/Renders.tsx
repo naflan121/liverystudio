@@ -26,6 +26,31 @@ function since(iso?: string): string {
 
 const small = { ...ghostBtn, padding: '5px 11px', fontSize: 12.5 }
 
+// Date range for "Prompts ready to render" (by when the prompt was written, local time).
+type Range = 'today' | '3days' | 'month' | 'lastMonth' | 'all'
+const RANGES: { id: Range; label: string }[] = [
+  { id: 'today', label: 'Today' },
+  { id: '3days', label: 'Last 3 days' },
+  { id: 'month', label: 'This month' },
+  { id: 'lastMonth', label: 'Last month' },
+  { id: 'all', label: 'All' },
+]
+function inRange(ts: string, r: Range): boolean {
+  if (r === 'all') return true
+  const t = new Date(ts).getTime()
+  const now = new Date()
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  if (r === 'today') return t >= startOfToday
+  if (r === '3days') return t >= startOfToday - 2 * 86400000 // today + the two days before
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
+  if (r === 'month') return t >= startOfMonth
+  return t >= new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime() && t < startOfMonth
+}
+const RANGE_KEY = 'studio.readyRange'
+function loadRange(): Range {
+  try { const v = localStorage.getItem(RANGE_KEY) as Range | null; return v && RANGES.some((r) => r.id === v) ? v : '3days' } catch { return '3days' }
+}
+
 /** Latest job per entry (jobs are stored newest-first). */
 export function latestJobByEntry(jobs: RenderJob[]): Map<number, RenderJob> {
   const m = new Map<number, RenderJob>()
@@ -146,7 +171,11 @@ export function Renders({ entries, jobs, onOpenEntry, onClose, onRefresh, refsDe
   const [ov, setOv] = useState<RenderOverview | null>(null)
   const [picked, setPicked] = useState<number[]>([])
   const [filter, setFilter] = useState<'active' | 'done' | 'all'>('active')
-  const [showOld, setShowOld] = useState(false)
+  const [range, setRangeState] = useState<Range>(loadRange)
+  const setRange = (r: Range): void => {
+    setRangeState(r); setPicked([])
+    try { localStorage.setItem(RANGE_KEY, r) } catch { /* per-viewer convenience only */ }
+  }
 
   // Instances + today's count come from the main process; poll gently while open.
   useEffect(() => {
@@ -160,13 +189,13 @@ export function Renders({ entries, jobs, onOpenEntry, onClose, onRefresh, refsDe
   const byId = useMemo(() => new Map(entries.map((e) => [e.id, e])), [entries])
   const latest = useMemo(() => latestJobByEntry(jobs), [jobs])
   // Prompts still awaiting a post that have no live or finished render yet.
-  // Older than two weeks is hidden by default: those were usually rendered by hand in the Lab days.
+  // Filtered by when the prompt was written; older ones were often rendered by hand in the Lab days.
   const unrendered = useMemo(() => entries.filter((e) => e.status === 'queued'
-    && (showOld || Date.now() - new Date(e.ts).getTime() < 14 * 86400000)
+    && inRange(e.ts, range)
     && (() => {
       const j = latest.get(e.id)
       return !j || j.status === 'failed' || j.status === 'cancelled'
-    })()), [entries, latest, showOld])
+    })()), [entries, latest, range])
 
   const shown = jobs.filter((j) => filter === 'all' ? true : filter === 'done' ? j.status === 'done' : RENDER_META[j.status].live || j.status === 'failed')
   const liveCount = jobs.filter((j) => RENDER_META[j.status].live).length
@@ -232,9 +261,11 @@ export function Renders({ entries, jobs, onOpenEntry, onClose, onRefresh, refsDe
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: unrendered.length ? 10 : 0, flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <div style={{ fontSize: 13, fontWeight: 700 }}>Prompts ready to render <span style={{ color: MUTE, fontWeight: 500 }}>· {unrendered.length}</span></div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: MUTE, cursor: 'pointer' }}>
-                <input type="checkbox" checked={showOld} onChange={(e) => { setShowOld(e.target.checked); setPicked([]) }} style={{ accentColor: ACCENT }} /> include older than 14 days
-              </label>
+              <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+                {RANGES.map((r) => (
+                  <button key={r.id} onClick={() => setRange(r.id)} style={{ borderRadius: 20, padding: '3px 10px', fontSize: 12, cursor: 'pointer', border: `1px solid ${range === r.id ? INK : LINE}`, background: range === r.id ? INK : '#fff', color: range === r.id ? '#fff' : MUTE, fontWeight: range === r.id ? 600 : 500 }}>{r.label}</button>
+                ))}
+              </span>
             </div>
             <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               {refreshMsg && <span style={{ fontSize: 12, color: refreshMsg.startsWith('+') ? GOOD : MUTE }}>{refreshMsg}</span>}
@@ -249,7 +280,7 @@ export function Renders({ entries, jobs, onOpenEntry, onClose, onRefresh, refsDe
             )}
           </div>
           {unrendered.length === 0
-            ? <div style={{ fontSize: 12.5, color: MUTE }}>Every awaiting prompt already has a render. Generate more in the lab.</div>
+            ? <div style={{ fontSize: 12.5, color: MUTE }}>No unrendered prompts {range === 'all' ? '' : `in "${RANGES.find((r) => r.id === range)!.label}"`}. Try another range, or generate more in the lab.</div>
             : (
               <div style={{ display: 'grid', gap: 4, maxHeight: 260, overflowY: 'auto' }}>
                 {unrendered.map((e) => (
