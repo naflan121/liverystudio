@@ -90,6 +90,14 @@ export function Today({ entries, jobs, overview, onNav, onOpenEntry }: {
         <button onClick={() => onNav('renders')} style={ghostBtn}>Render ready prompts</button>
       </PageHeader>
 
+      {overview?.paused && (
+          <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', border: '1px solid var(--warn)', background: 'var(--surface)', borderRadius: 12, padding: '10px 14px' }}>
+            <span style={{ fontFamily: 'var(--f-display)', fontSize: 15, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: 'var(--warn)' }}>Sending paused</span>
+            <span style={{ flex: 1, minWidth: 200, fontSize: 12.5, color: 'var(--ink)' }}>{overview?.paused.reason} <span style={{ color: 'var(--mute)' }}>Videos already sent keep generating and downloading.</span></span>
+            <button onClick={() => window.api.renderResume()} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 9, padding: '7px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Resume sending</button>
+          </div>
+        )}
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
         <Tile label="Written today" value={String(writtenToday)} sub="prompts from the brain" onClick={() => onNav('history')} />
         <Tile label="Sent today" value={`${sent}`} sub={`of ${cap} daily cap${failedToday ? ` · ${failedToday} failed` : ''}`} tone={failedToday ? 'bad' : 'none'} onClick={() => onNav('renders')} />

@@ -55,6 +55,20 @@ Native module: after `npm install`, `postinstall` runs `electron-rebuild` for
 better-sqlite3. If the app fails with a NODE_MODULE_VERSION error, run
 `npx electron-rebuild -f -w better-sqlite3`.
 
+**Renderer layout (UI stage 1–3).** `Shell.tsx` = sidebar (Today / Create / Renders /
+Review / Library / Brain / Settings), status bar, activity drawer, theme switch.
+Colours are CSS tokens in `theme.css` (dark default, light, follow-Windows); never
+hard-code a hex in a screen — use `ui.ts` tokens. Screens: `Today.tsx`,
+`lab/Lab.tsx` (+ `lab/useLab.ts`: lab state lives in a hook called by App so it
+survives screen switches), `Renders.tsx`, `Review.tsx`, `Library.tsx`,
+`Settings.tsx` (mode "settings" | "brain" — Brain reuses it for the knowledge cards,
+plus `brain/BrainCards.tsx`: usage meter + review record).
+
+**Usage meter / notifications / Dola guard.** `claude.ts` reports each call's
+CLI-reported cost + tokens to the `usage` table (v3). `notify.ts` shows Windows
+toasts per Settings → Notifications. `render.ts` pauses new sends after
+`render.pauseAfterFailures` page failures in a row (state in meta `queue_paused`).
+
 ## What the brain is (inherited from Livery Lab)
 
 **Livery Lab** — a self-learning Electron desktop app that generates

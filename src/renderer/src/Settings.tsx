@@ -5,6 +5,7 @@ import { trendMasterPrompt } from '@shared/prompts'
 import { winRateStats, comboWinRates, operatorFrequency, DEFAULT_WIN_RATE_DIMS } from '@shared/brain'
 import type { AppConfig, CliTestResult, Entry, LogLine, LogLevel, SavedConcept } from '@shared/types'
 import { REVIEW_DEFAULTS } from '@shared/review'
+import { UsageCard, ReviewRecordCard } from './brain/BrainCards'
 import { buildReferenceBlock, fillImage1, REFERENCE_IMAGE1_DEFAULT } from '@shared/references'
 
 const LOG_COLORS: Record<LogLevel, string> = { info: '#9c968a', step: '#f2a55e', ok: '#7fc59c', warn: '#e2b53c', err: '#ff8a6b' }
@@ -20,10 +21,10 @@ const MODELS = [
   { id: 'claude-fable-5', label: 'Fable 5 (previous gen, premium)' },
 ]
 
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
+function Card({ title, id, children }: { title: string; id?: string; children: React.ReactNode }) {
   return (
-    <div style={{ border: `1px solid ${LINE}`, borderRadius: 12, padding: '16px 18px', background: 'var(--surface)' }}>
-      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 14, letterSpacing: 0.3 }}>{title}</div>
+    <div id={id} style={{ border: `1px solid ${LINE}`, borderRadius: 12, padding: '16px 18px', background: 'var(--surface)', scrollMarginTop: 16 }}>
+      <div style={{ fontFamily: 'var(--f-display)', fontSize: 17, fontWeight: 600, marginBottom: 14, letterSpacing: 0.6, textTransform: 'uppercase' }}>{title}</div>
       <div style={{ display: 'grid', gap: 14 }}>{children}</div>
     </div>
   )
@@ -33,7 +34,19 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   return <div><div style={lbl}>{label}</div>{children}</div>
 }
 
-export function Settings({ config, onSave, onClose, playbook, onPlaybook, onResetMemory }: {
+/** Configuration cards live on the Settings screen; what the engine has learned lives on the Brain screen. */
+const SETTINGS_SECTIONS: { id: string; label: string }[] = [
+  { id: 's-ai', label: 'AI & models' },
+  { id: 's-prompts', label: 'Prompts & titles' },
+  { id: 's-render', label: 'Render (Dola)' },
+  { id: 's-review', label: 'Review' },
+  { id: 's-notify', label: 'Notifications' },
+  { id: 's-data', label: 'Data & backups' },
+  { id: 's-defaults', label: 'Default levers' },
+]
+
+export function Settings({ mode = 'settings', config, onSave, onClose, playbook, onPlaybook, onResetMemory }: {
+  mode?: 'settings' | 'brain'
   config: AppConfig
   onSave: (c: AppConfig) => void
   onClose: () => void
@@ -43,7 +56,12 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
 }) {
   // Fill any section an older main process didn't send (e.g. the UI hot-reloaded
   // ahead of a backend restart) so the page renders instead of crashing.
-  const [c, setC] = useState<AppConfig>(() => ({ ...config, review: { ...REVIEW_DEFAULTS, ...(config.review || {}) } }))
+  const [c, setC] = useState<AppConfig>(() => ({
+    ...config,
+    review: { ...REVIEW_DEFAULTS, ...(config.review || {}) },
+    notify: { enabled: true, onlyWhenUnfocused: true, renderDone: true, renderFailed: true, capReached: true, queuePaused: true, autoRetry: false, ...(config.notify || {}) },
+    render: { ...config.render, pauseAfterFailures: config.render?.pauseAfterFailures ?? 3 },
+  }))
   const [pb, setPb] = useState(playbook)
   const [savedAt, setSavedAt] = useState(0)
   const [test, setTest] = useState<CliTestResult | null>(null)
@@ -163,6 +181,8 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
   const setDef = (patch: Partial<AppConfig['defaults']>) => setC((prev) => ({ ...prev, defaults: { ...prev.defaults, ...patch } }))
   const setRender = (patch: Partial<AppConfig['render']>) => setC((prev) => ({ ...prev, render: { ...prev.render, ...patch } }))
   const setReview = (patch: Partial<AppConfig['review']>) => setC((prev) => ({ ...prev, review: { ...prev.review, ...patch } }))
+  const setNotify = (patch: Partial<AppConfig['notify']>) => setC((prev) => ({ ...prev, notify: { ...prev.notify, ...patch } }))
+  const isBrain = mode === 'brain'
   const [lessons, setLessons] = useState('')
   const [lessonsMsg, setLessonsMsg] = useState('')
   useEffect(() => { window.api.getRenderLessons().then(setLessons).catch(() => { /* ignore */ }) }, [])
@@ -232,15 +252,15 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
 
   return (
     <div style={{ minHeight: '100%', background: PAPER, color: INK, fontFamily: 'var(--f-body)' }}>
-      <div style={{ maxWidth: 880, margin: '0 auto', padding: '24px 24px 32px' }}>
+      <div style={{ maxWidth: isBrain ? 1180 : 1060, margin: '0 auto', padding: '24px 24px 32px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
           <div>
-            <div style={eyebrow}>Settings</div>
-            <h1 style={{ ...pageTitle, marginTop: 2 }}>Configuration</h1>
+            <div style={eyebrow}>{isBrain ? 'Brain · what the engine has learned' : 'Settings'}</div>
+            <h1 style={{ ...pageTitle, marginTop: 2 }}>{isBrain ? 'Brain' : 'Configuration'}</h1>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             {savedAt > 0 && <span style={{ color: GOOD, fontSize: 13, fontWeight: 600 }}>Saved</span>}
-            <button onClick={save} style={{ background: ACCENT, color: '#fff', border: 'none', borderRadius: 10, padding: '10px 18px', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>Save settings</button>
+            <button onClick={save} style={{ background: ACCENT, color: '#fff', border: 'none', borderRadius: 10, padding: '10px 18px', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>{isBrain ? 'Save' : 'Save settings'}</button>
             
           </div>
         </div>
@@ -267,8 +287,24 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
           </div>
         )}
 
-        <div style={{ display: 'grid', gap: 16 }}>
-          <Card title="AI / Claude Code CLI">
+        <div style={{ display: 'grid', gridTemplateColumns: isBrain ? 'minmax(0, 1fr)' : '180px minmax(0, 1fr)', gap: 20, alignItems: 'start' }}>
+        {!isBrain && (
+          <nav aria-label="Settings sections" style={{ position: 'sticky', top: 16, display: 'grid', gap: 2 }}>
+            {SETTINGS_SECTIONS.map((sec) => (
+              <button key={sec.id} onClick={() => document.getElementById(sec.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                style={{ textAlign: 'left', background: 'transparent', border: 'none', borderRadius: 7, padding: '7px 10px', fontSize: 13.5, color: MUTE, cursor: 'pointer', fontWeight: 500 }}>{sec.label}</button>
+            ))}
+          </nav>
+        )}
+        <div style={{ display: 'grid', gap: 16, minWidth: 0 }}>
+          {isBrain && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(440px, 1fr))', gap: 16, alignItems: 'start' }}>
+              <Card title="Usage · Claude calls" id="b-usage"><UsageCard /></Card>
+              <Card title="Review record" id="b-review"><ReviewRecordCard entries={history} /></Card>
+            </div>
+          )}
+          {!isBrain && (
+          <Card title="AI / Claude Code CLI" id="s-ai">
             <Field label="Claude CLI path (leave blank to auto-detect)">
               <input value={c.cliPath} onChange={(e) => set({ cliPath: e.target.value })} placeholder="auto-detect" style={{ ...sel, boxSizing: 'border-box', fontFamily: 'var(--f-mono)', fontSize: 12.5 }} />
             </Field>
@@ -286,8 +322,10 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
               <Field label="Request timeout (ms)">{num(c.timeoutMs, (n) => set({ timeoutMs: n }))}</Field>
             </div>
           </Card>
+          )}
 
-          <Card title="Prompt length">
+          {!isBrain && (
+          <Card title="Prompt length" id="s-prompts">
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px,1fr))', gap: 14 }}>
               <Field label="Hard char limit">{num(c.charLimit, (n) => set({ charLimit: n }))}</Field>
               <Field label="Long-prompt limit (Long prompt on)">{num(c.longPromptChars || 4800, (n) => set({ longPromptChars: Math.max(1500, n) }))}</Field>
@@ -298,7 +336,9 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
               <textarea value={c.extraNegatives} onChange={(e) => set({ extraNegatives: e.target.value })} rows={2} placeholder="e.g. lens flare, double exposure" style={{ width: '100%', padding: '9px 11px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 13.5, boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit', color: INK }} />
             </Field>
           </Card>
+          )}
 
+          {!isBrain && (
           <Card title="Titles">
             <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13.5 }}>
               <input type="checkbox" checked={c.titleEnabled} onChange={(e) => set({ titleEnabled: e.target.checked })} style={{ width: 16, height: 16, accentColor: ACCENT }} />
@@ -306,8 +346,10 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
             </label>
             <Field label="Title max length">{num(c.titleMaxLen, (n) => set({ titleMaxLen: n }))}</Field>
           </Card>
+          )}
 
-          <Card title="Self-learning memory">
+          {isBrain && (
+          <Card title="Self-learning memory" id="b-playbook">
             <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13.5 }}>
               <input type="checkbox" checked={c.autoLearn} onChange={(e) => set({ autoLearn: e.target.checked })} style={{ width: 16, height: 16, accentColor: ACCENT }} />
               <span><span style={{ fontWeight: 600 }}>Auto-learn on every result.</span> <span style={{ color: MUTE }}>Folds each scored reel into the playbook automatically.</span></span>
@@ -335,8 +377,10 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
               <strong>Re-distill</strong> rebuilds the whole playbook from scratch across all your scored results (uses the Learning model). Good for clearing accumulated bias.{pbMsg ? <span style={{ color: GOOD, fontWeight: 600 }}> {pbMsg}</span> : null}
             </div>
           </Card>
+          )}
 
-          <Card title="What's working · win rates">
+          {isBrain && (
+          <Card title="What's working · win rates" id="b-wins">
             <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>
               Share of your scored clips that hit <strong>Good</strong> or <strong>Viral</strong>, per lever value (values with at least 2 scored clips). This is the raw data the playbook learns from — use it to spot which levers to lean on.
             </div>
@@ -390,8 +434,10 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
               </div>
             )}
           </Card>
+          )}
 
-          <Card title="Coverage · aircraft & settings">
+          {isBrain && (
+          <Card title="Coverage · aircraft & settings" id="b-coverage">
             <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>
               Aircraft and settings that scored <strong>Good</strong> or <strong>Viral</strong> for each scenario (only those are recorded — and only if you left the “Add to coverage” box ticked). The engine always steers to a fresh <strong>aircraft</strong>; tick <strong>“Vary using coverage”</strong> in the lab to also push to a fresh <strong>setting</strong>. The same one can still appear under a different scenario. Stored on the history entry; resets with “Reset all memory”.
             </div>
@@ -435,8 +481,10 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
               </div>
             )}
           </Card>
+          )}
 
-          <Card title="AI Concepts · saved library">
+          {isBrain && (
+          <Card title="AI Concepts · saved library" id="b-concepts">
             <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>
               Concepts you've saved from "💡 Surprise concept" in the lab — pick one from the Scenario dropdown to reuse it. Deleting one here only removes it from that dropdown; past clips generated from it stay in your history.
             </div>
@@ -457,8 +505,10 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
               </div>
             )}
           </Card>
+          )}
 
-          <Card title="Trends · ride what's hot">
+          {isBrain && (
+          <Card title="Trends · ride what's hot" id="b-trends">
             <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>
               Pull a fresh digest of what's currently trending in aviation / RC short-form, then tick <strong>“Use current trends”</strong> in the lab to weave it into prompts. <strong>Refresh</strong> uses the Claude CLI's web search. If that's unavailable, use the copy-paste fallback below.
             </div>
@@ -482,8 +532,10 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
               <div><button onClick={saveTrendPaste} disabled={!trendPaste.trim()} style={{ ...ghostBtn, opacity: trendPaste.trim() ? 1 : 0.6 }}>Save pasted digest</button></div>
             </div>
           </Card>
+          )}
 
-          <Card title="Render · Dola / Seedance">
+          {!isBrain && (
+          <Card title="Render · Dola / Seedance" id="s-render">
             <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>
               Prompts are rendered through <strong>DolaMultiBrowser</strong> (Control API must be enabled). Each Dola instance renders one video at a time; the watermark-free MP4 lands in the folder below with a .json sidecar. Don't drive the same instances from the dola MCP at the same time.
             </div>
@@ -491,6 +543,7 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
               <Field label="Daily cap (renders sent / day)">{num(c.render.dailyCap, (n) => setRender({ dailyCap: Math.max(0, n) }))}</Field>
               <Field label="Max at once (0 = one per free instance)">{num(c.render.maxParallel, (n) => setRender({ maxParallel: Math.max(0, n) }))}</Field>
               <Field label="Wait per video (minutes)">{num(c.render.waitMinutes, (n) => setRender({ waitMinutes: Math.max(5, n) }))}</Field>
+              <Field label="Pause after page failures in a row (0 = never)">{num(c.render.pauseAfterFailures, (n) => setRender({ pauseAfterFailures: Math.max(0, n) }))}</Field>
             </div>
             <Field label="Reserved instance ids (never used for rendering, comma-separated)">
               <input value={excludeDraft} onChange={(e) => { setExcludeDraft(e.target.value); setRender({ excludeInstances: e.target.value.split(',').map((x) => parseInt(x.trim(), 10)).filter((n) => Number.isInteger(n)) }) }} placeholder="e.g. 5, 16" style={{ ...sel, boxSizing: 'border-box' }} />
@@ -544,8 +597,10 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
               </label>
             </div>
           </Card>
+          )}
 
-          <Card title="Review · learning from rejected renders">
+          {!isBrain && (
+          <Card title="Review · learning from rejected renders" id="s-review">
             <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>
               Every finished render waits in <strong>Review</strong>. Approved takes move to <code>approved\</code> and rejected ones to <code>rejected\</code> inside the video folder. Rejection reasons build a compact <strong>render lessons</strong> memory that rides along on new prompts, separate from the reach playbook.
             </div>
@@ -573,6 +628,13 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
             <div style={{ fontSize: 12, color: MUTE, lineHeight: 1.55 }}>
               Cost: <strong>re-render</strong> uses one Dola render from today's cap and no Claude tokens. <strong>Rewrite</strong> adds one Claude call, then the render. Retries are counted per prompt (including its rewrites), so a stubborn prompt stops after the limit and waits for you.
             </div>
+            <div style={{ fontSize: 12, color: MUTE }}>The render lessons themselves are on the <strong>Brain</strong> screen.</div>
+          </Card>
+          )}
+
+          {isBrain && (
+          <Card title="Render lessons · learned from rejected renders" id="b-lessons">
+            <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>Rules the engine learned from your rejections. They ride along on every new prompt while "Use render lessons" is on (Settings → Review). Edit freely.</div>
             <Field label="Render lessons (editable — what gets added to new prompts)">
               <textarea value={lessons} onChange={(e) => setLessons(e.target.value)} rows={7} placeholder="Empty until you reject a render with learning on." style={{ width: '100%', padding: '10px 12px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 12.5, boxSizing: 'border-box', resize: 'vertical', fontFamily: 'var(--f-mono)', color: INK }} />
             </Field>
@@ -582,8 +644,37 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
               {lessonsMsg && <span style={{ fontSize: 12.5, color: GOOD }}>{lessonsMsg}</span>}
             </div>
           </Card>
+          )}
 
-          <Card title="Brain source · Livery Lab">
+          {!isBrain && (
+          <Card title="Notifications" id="s-notify">
+            <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>Windows notifications for the things that need you. Clicking one opens the right screen.</div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13.5, fontWeight: 600 }}>
+              <input type="checkbox" checked={c.notify.enabled} onChange={(e) => setNotify({ enabled: e.target.checked })} style={{ width: 16, height: 16, accentColor: ACCENT }} /> Show notifications
+            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 8, opacity: c.notify.enabled ? 1 : 0.5 }}>
+              {([
+                ['renderDone', 'Render finished', 'ready for review'],
+                ['renderFailed', 'Render failed', 'with the reason'],
+                ['queuePaused', 'Sending paused', 'Dola page looks different'],
+                ['capReached', 'Daily cap reached', 'once a day'],
+                ['autoRetry', 'Automatic retry', 'after every take was rejected'],
+              ] as const).map(([k, label, hint]) => (
+                <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13.5 }}>
+                  <input type="checkbox" disabled={!c.notify.enabled} checked={c.notify[k]} onChange={(e) => setNotify({ [k]: e.target.checked })} style={{ width: 16, height: 16, accentColor: ACCENT }} />
+                  <span>{label} <span style={{ color: MUTE }}>— {hint}</span></span>
+                </label>
+              ))}
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13.5, opacity: c.notify.enabled ? 1 : 0.5 }}>
+              <input type="checkbox" disabled={!c.notify.enabled} checked={c.notify.onlyWhenUnfocused} onChange={(e) => setNotify({ onlyWhenUnfocused: e.target.checked })} style={{ width: 16, height: 16, accentColor: ACCENT }} /> Only when I'm not looking at the Studio
+            </label>
+            <div><button onClick={() => window.api.testNotification()} style={ghostBtn}>Send a test notification</button></div>
+          </Card>
+          )}
+
+          {!isBrain && (
+          <Card title="Brain source · Livery Lab" id="s-data">
             <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>
               Livery Studio started with a <strong>copy</strong> of Livery Lab's brain. The two now learn separately — the Lab's files are never written from here. Re-import only if you kept working in the Lab and want its latest playbook and history here.
             </div>
@@ -595,7 +686,9 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
               {importMsg && <span style={{ fontSize: 12.5, color: GOOD }}>{importMsg}</span>}
             </div>
           </Card>
+          )}
 
+          {!isBrain && (
           <Card title="Data folder · multi-device sync">
             <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>
               Holds the playbook, config, trends and concepts, plus a <strong>backups</strong> folder with a daily snapshot of the database (last 7 days). Point it at a <strong>Google Drive folder</strong> to keep those off this PC. <strong>Use a different folder from Livery Lab's</strong> — the two apps must not share data files. The live database (prompt history and render jobs) always stays on this PC, because syncing an open database file corrupts it.
@@ -610,8 +703,10 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
               {dataMsg && <span style={{ fontSize: 12.5, color: GOOD }}>{dataMsg}</span>}
             </div>
           </Card>
+          )}
 
-          <Card title="Default levers for new prompts">
+          {!isBrain && (
+          <Card title="Default levers for new prompts" id="s-defaults">
             <Field label="Scenario">
               <select value={c.defaults.scenario} onChange={(e) => setDef({ scenario: e.target.value })} style={sel}>
                 {groupScenarios().map(([group, items]) => group === ''
@@ -640,6 +735,8 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
               </label>
             </div>
           </Card>
+          )}
+        </div>
         </div>
       </div>
     </div>

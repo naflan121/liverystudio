@@ -219,10 +219,21 @@ export function Renders({ entries, jobs, onOpenEntry, onClose, onRefresh, refsDe
             <h1 style={{ ...pageTitle, marginTop: 2 }}>Video renders</h1>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
+            {ov?.paused
+              ? <button onClick={() => window.api.renderResume().then(() => window.api.renderOverview().then(setOv))} style={ghostBtn}>Resume sending</button>
+              : <button onClick={() => window.api.renderPause().then(() => window.api.renderOverview().then(setOv))} title="Stop sending new renders to Dola. Videos already sent keep generating and downloading." style={ghostBtn}>Pause sending</button>}
             <button onClick={() => window.api.renderOpenOutput()} style={ghostBtn}>Open video folder</button>
             
           </div>
         </div>
+
+{ov?.paused && (
+          <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', border: '1px solid var(--warn)', background: 'var(--surface)', borderRadius: 12, padding: '10px 14px' }}>
+            <span style={{ fontFamily: 'var(--f-display)', fontSize: 15, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: 'var(--warn)' }}>Sending paused</span>
+            <span style={{ flex: 1, minWidth: 200, fontSize: 12.5, color: 'var(--ink)' }}>{ov?.paused.reason} <span style={{ color: 'var(--mute)' }}>Videos already sent keep generating and downloading.</span></span>
+            <button onClick={() => window.api.renderResume().then(() => window.api.renderOverview().then(setOv))} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 9, padding: '7px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Resume sending</button>
+          </div>
+        )}
 
         {/* Today + instances */}
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 260px) 1fr', gap: 14 }}>

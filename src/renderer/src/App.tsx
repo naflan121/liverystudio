@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { MUTE } from './ui'
 import type { AppConfig, Entry, LogLine, RenderJob, RenderOverview } from '@shared/types'
 import { Settings } from './Settings'
-import { History } from './History'
+import { Library } from './Library'
 import { Renders, RENDER_META, latestJobByEntry } from './Renders'
 import { Review } from './Review'
 import { Shell, loadTheme, applyTheme, type View, type Theme } from './Shell'
@@ -102,7 +102,10 @@ export function App() {
       onRefresh={async () => { const r = await window.api.refreshHistory(); setHistory(r.history); return r.added }} />
   )
   const historyView = (
-    <History entries={history} openId={cur?.id ?? null} onOpen={(h) => { openEntry(h); setView('lab') }} onClose={() => setView('lab')} />
+    <Library entries={history} jobs={renderJobs} openId={cur?.id ?? null} onOpen={(h) => { openEntry(h); setView('lab') }} />
+  )
+  const brainView = (
+    <Settings mode="brain" config={config} onSave={setConfig} onClose={() => setView('lab')} playbook={playbook} onPlaybook={setPlaybook} onResetMemory={clearAll} />
   )
 
   const toScore = history.filter((h) => h.status === 'posted').length
@@ -114,7 +117,8 @@ export function App() {
       : view === 'renders' ? rendersView
         : view === 'review' ? reviewView
           : view === 'history' ? historyView
-            : settingsView
+            : view === 'brain' ? brainView
+              : settingsView
 
   return (
     <Shell view={view} onNav={setView} overview={overview} logs={logs} onClearLogs={() => setLogs([])} busy={busy} theme={theme} onTheme={setTheme}
