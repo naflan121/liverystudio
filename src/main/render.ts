@@ -11,7 +11,7 @@ import path from 'node:path'
 import { getConfig, getRenderJobs, setRenderJobs } from './store'
 import { getEntry, getMeta, setMeta } from './db'
 import { notify } from './notify'
-import { listInstances, startInstance, showInstance, waitUntilDrawn, getPage, forget, fillVideoPrompt, sendAndHandleBusy, waitForVideo, Cancelled } from './dola/driver'
+import { listInstances, startInstance, showInstance, waitUntilDrawn, getPage, forget, fillVideoPrompt, sendAndHandleBusy, waitForVideo, Cancelled, NoCreditsError, type CreditsInfo } from './dola/driver'
 import { resolveFallbackApi, downloadFile } from './dola/resolver'
 import type { RenderJob, RenderOverview, DolaInstanceInfo, LogLevel, QueuePause } from '../shared/types'
 
@@ -90,6 +90,40 @@ function notePageFailure(message: string): void {
 
 let capNotifiedDay = ''
 
+// --- Dola daily video credits ----------------------------------------------------------
+// When an account replies "…will use 6 video credits. You only have 1 left today…", it rests
+// until Settings → Render → credits reset hour and the job moves to another account. Not a
+// failure, not a page failure, and it doesn't count toward the daily cap. Persisted in meta.
+interface CreditsOut { until: number; need?: number; left?: number }
+let creditsOut: Record<number, CreditsOut> = {}
+function loadCredits(): void {
+  try { creditsOut = JSON.parse(getMeta('dola_credits_out') || '{}') } catch { creditsOut = {} }
+}
+function saveCredits(): void { setMeta('dola_credits_out', JSON.stringify(creditsOut)) }
+const outOfCredits = (id: number): boolean => (creditsOut[id]?.until ?? 0) > Date.now()
+
+/** Next local time at the reset hour. */
+function nextCreditReset(): number {
+  const h = Math.min(23, Math.max(0, Math.round(getConfig().render.creditResetHour ?? 0)))
+  const d = new Date(); d.setHours(h, 0, 0, 0)
+  if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1)
+  return d.getTime()
+}
+const hhmm = (ms: number): string => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` }
+
+/** Rest the account until the reset and hand the job to another account. */
+function onNoCredits(job: RenderJob, inst: { id: number; name: string }, info: CreditsInfo): void {
+  const until = nextCreditReset()
+  creditsOut[inst.id] = { until, need: info.need, left: info.left }
+  saveCredits()
+  emitLog('warn', `${inst.name} is out of Dola video credits${info.need != null ? ` (a render needs ${info.need}, ${info.left ?? 0} left)` : ''} — resting it until ${hhmm(until)} and moving "${job.title}" to another account.`)
+  job.attempts = Math.max(0, job.attempts - 1) // not the job's fault
+  patch(job, { status: 'queued', tried: [...job.tried, inst.id], chatUrl: undefined, sentAt: undefined, instanceId: undefined, instanceName: undefined, note: `${inst.name} was out of credits; moved to another account` })
+}
+
+export function clearCredits(): void { creditsOut = {}; saveCredits(); emitLog('info', 'Dola credit rests cleared.'); save(); pump() }
+let creditsNotifiedUntil = 0
+
 // Called once per finished render (the AI pre-check hooks in here).
 let onRenderDone: (job: RenderJob) => void = () => { /* set by index.ts */ }
 export function setOnRenderDone(fn: (job: RenderJob) => void): void { onRenderDone = fn }
@@ -107,6 +141,7 @@ export function initRenderQueue(log: Emit, change: OnChange, refs?: (job: Render
   onChange = change
   if (refs) resolveReferences = refs
   jobs = getRenderJobs()
+  loadCredits()
   // Anything mid-flight when the app last closed: resume waiting if it was already
   // sent (chatUrl known), otherwise put it back in the queue from scratch.
   let resumed = 0, requeued = 0
@@ -131,6 +166,7 @@ export async function overview(): Promise<RenderOverview> {
       id: i.id, name: i.name, kind: i.kind, status: i.status, isInitialized: i.isInitialized,
       excluded: excl.has(i.id), busy: activeInstances.has(i.id),
       cooldownUntil: (cooldown.get(i.id) ?? 0) > Date.now() ? cooldown.get(i.id) : undefined,
+      ...(outOfCredits(i.id) ? { creditsOutUntil: creditsOut[i.id].until, creditsNeed: creditsOut[i.id].need, creditsLeft: creditsOut[i.id].left } : {}),
     }))
     return { ...base, instances }
   } catch (e: any) {
@@ -208,8 +244,8 @@ async function pickInstance(job: RenderJob): Promise<{ id: number; name: string;
     if (!inst) throw new Error(`Dola instance ${job.instanceId} no longer exists.`)
     return activeInstances.has(inst.id) ? null : inst
   }
-  const skip = new Set([...cfg.excludeInstances, ...job.tried])
-  const free = all.filter((i) => !skip.has(i.id) && !activeInstances.has(i.id) && (cooldown.get(i.id) ?? 0) < Date.now())
+  const skip = new Set([...cfg.excludeInstances, ...job.tried.filter((id) => !(creditsOut[id] && !outOfCredits(id)))])
+  const free = all.filter((i) => !skip.has(i.id) && !activeInstances.has(i.id) && (cooldown.get(i.id) ?? 0) < Date.now() && !outOfCredits(i.id))
   return free.find((i) => i.isInitialized) ?? (cfg.autoStartInstances ? free.find((i) => !i.isInitialized) : undefined) ?? null
 }
 
@@ -243,6 +279,17 @@ async function pump(): Promise<void> {
           const note = e?.message || String(e)
           if (job.note !== note) patch(job, { note })
           continue
+        }
+        if (!inst && !resuming) {
+          // Every usable account resting on credits? Say so (and notify once per reset window).
+          const usable = (await listInstances().catch(() => [])).filter((i) => !cfg.excludeInstances.includes(i.id))
+          if (usable.length && usable.every((i) => outOfCredits(i.id))) {
+            const back = Math.min(...usable.map((i) => creditsOut[i.id].until))
+            const note = `All Dola accounts are out of video credits — continues at ${hhmm(back)}`
+            if (job.note !== note) patch(job, { note })
+            if (creditsNotifiedUntil !== back) { creditsNotifiedUntil = back; notify('creditsOut', 'Dola accounts are out of video credits', `Renders continue at ${hhmm(back)}, when Dola's daily credits reset.`, 'renders') }
+            continue
+          }
         }
         if (!inst) {
           const note = resuming ? 'Waiting for its Dola instance to be free' : 'Waiting for a free Dola instance'
@@ -294,6 +341,7 @@ async function runJob(job: RenderJob, inst: { id: number; name: string; isInitia
       })
       patch(job, { chatUrl: sent.url })
       pageFailuresInARow = 0 // the page worked
+      if (sent.status === 'no_credits') { onNoCredits(job, inst, sent.credits || { text: '' }); return }
       if (sent.status === 'still_busy') {
         cooldown.set(inst.id, Date.now() + BUSY_COOLDOWN_MS)
         const tried = [...job.tried, inst.id]
@@ -328,6 +376,7 @@ async function runJob(job: RenderJob, inst: { id: number; name: string; isInitia
     notify('renderDone', 'Render ready for review', job.title, 'review')
     try { onRenderDone(job) } catch { /* the pre-check is optional */ }
   } catch (e: any) {
+    if (e instanceof NoCreditsError) { onNoCredits(job, inst, e.info); return }
     if (e instanceof Cancelled) {
       patch(job, { status: 'cancelled', endedAt: new Date().toISOString(), note: undefined })
       emitLog('info', `Render cancelled: "${job.title}"`)

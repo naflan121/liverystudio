@@ -30,6 +30,7 @@ export const DEFAULT_RENDER: RenderSettings = {
   autoStartInstances: true,
   autoRender: false,
   pauseAfterFailures: 3,
+  creditResetHour: 0,
 }
 
 export const DEFAULT_REVIEW: ReviewSettings = REVIEW_DEFAULTS // shared so the renderer can fill gaps too
@@ -50,6 +51,7 @@ export const DEFAULT_NOTIFY: NotifySettings = {
   capReached: true,
   queuePaused: true,
   autoRetry: false,
+  creditsOut: true,
 }
 
 export const DEFAULT_CONFIG: AppConfig = {

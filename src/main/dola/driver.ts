@@ -27,6 +27,20 @@ const VIDEO_SKILL = { command: '/creative-video', option: 'Generate Videos' }
 const VIDEO_EXTRA = ['NotifyHuman Artifacts', 'Dont ask me any more confirmation go ahead']
 
 export class Cancelled extends Error { constructor() { super('Cancelled') } }
+
+// Dola's daily video-credit limit, e.g. "Generating with the current parameters will use 6 video
+// credits. You only have 1 left today. Change the parameters and try again."
+export interface CreditsInfo { need?: number; left?: number; text: string }
+export function parseCredits(text: string | null | undefined): CreditsInfo | null {
+  if (!text) return null
+  const m = /use\s+(\d+)\s+video\s+credits?[\s\S]{0,80}?only\s+have\s+(\d+)\s+left/i.exec(text)
+  if (m) return { need: Number(m[1]), left: Number(m[2]), text: text.slice(0, 240) }
+  if (/(not enough|insufficient|run out of|out of|no more|used up all)[^.]{0,40}(video\s+)?credits?|credits?\s+(are|have been)\s+(used up|exhausted)/i.test(text)) return { text: text.slice(0, 240) }
+  return null
+}
+export class NoCreditsError extends Error {
+  constructor(public info: CreditsInfo) { super(`Dola account is out of video credits for today${info.need != null ? ` (needs ${info.need}, has ${info.left ?? 0})` : ''}.`) }
+}
 export type CancelCheck = () => boolean
 const checkCancel = (c?: CancelCheck): void => { if (c?.()) throw new Cancelled() }
 
@@ -194,11 +208,12 @@ async function stillNotBusyAfter(page: Page, ms: number): Promise<boolean> {
   return !BUSY_RE.test((await lastReplyText(page)) ?? '')
 }
 
-async function waitForFirstReply(page: Page, before: number, timeoutMs = 60_000): Promise<'busy' | 'started'> {
+async function waitForFirstReply(page: Page, before: number, timeoutMs = 60_000): Promise<'busy' | 'started' | 'no_credits'> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if (await page.locator(SEL.reply).count() > before) {
       const text = await lastReplyText(page)
+      if (parseCredits(text)) return 'no_credits'
       if (text && BUSY_RE.test(text)) return 'busy'
       if (text) return (await stillNotBusyAfter(page, 10_000)) ? 'started' : 'busy'
     }
@@ -226,12 +241,13 @@ async function retryWhileBusy(page: Page, cancel?: CancelCheck): Promise<'starte
 }
 
 /** Click send, then ride out Dola's "high demand" replies. Returns the chat URL. */
-export async function sendAndHandleBusy(page: Page, cancel?: CancelCheck): Promise<{ url: string; status: 'started' | 'still_busy' }> {
+export async function sendAndHandleBusy(page: Page, cancel?: CancelCheck): Promise<{ url: string; status: 'started' | 'still_busy' | 'no_credits'; credits?: CreditsInfo }> {
   const before = await page.locator(SEL.reply).count()
   const startUrl = page.url()
   await page.locator(SEL.send).click()
   await page.waitForURL((u) => u.href !== startUrl, { timeout: 15_000 }).catch(() => { /* ignore */ })
   const first = await waitForFirstReply(page, before)
+  if (first === 'no_credits') return { url: page.url(), status: 'no_credits', credits: parseCredits(await lastReplyText(page)) || { text: '' } }
   if (first !== 'busy') return { url: page.url(), status: first }
   return { url: page.url(), status: await retryWhileBusy(page, cancel) }
 }
@@ -272,7 +288,10 @@ export async function waitForVideo(page: Page, o: { chatUrl?: string; waitMinute
   for (let poll = 0; ; poll++) {
     checkCancel(o.cancel)
     if (o.chatUrl && page.url() !== o.chatUrl) await page.goto(o.chatUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 })
-    if (BUSY_RE.test((await lastReplyText(page)) ?? '')) throw new Error('Dola replied with the high-demand error.')
+    const last = await lastReplyText(page)
+    const credits = parseCredits(last)
+    if (credits) throw new NoCreditsError(credits)
+    if (BUSY_RE.test(last ?? '')) throw new Error('Dola replied with the high-demand error.')
     if (await lastReplyHasVideo(page) || poll % 3 === 2 || Date.now() > deadline) {
       const apis = await captureFallbackApis(page, o.chatUrl)
       if (apis.length) return apis

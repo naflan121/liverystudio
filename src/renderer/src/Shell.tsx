@@ -71,6 +71,7 @@ export function Shell({ view, onNav, counts, overview, logs, onClearLogs, busy, 
   const rendering = inst.filter((i) => i.busy).length
   const ready = inst.filter((i) => i.isInitialized && !i.busy && !i.excluded && !i.cooldownUntil).length
   const cooling = inst.filter((i) => i.cooldownUntil).length
+  const noCredits = inst.filter((i) => i.creditsOutUntil && !i.excluded).length
   const cap = overview?.dailyCap ?? 0
   const sent = overview?.sentToday ?? 0
 
@@ -140,6 +141,7 @@ export function Shell({ view, onNav, counts, overview, logs, onClearLogs, busy, 
                 <span><b style={{ color: INFO, fontWeight: 600 }}>● {rendering}</b> rendering</span>
                 <span><b style={{ color: GOOD, fontWeight: 600 }}>● {ready}</b> ready</span>
                 {cooling > 0 && <span><b style={{ color: WARN, fontWeight: 600 }}>● {cooling}</b> cooling</span>}
+                {noCredits > 0 && <span title="Dola accounts out of video credits until the daily reset"><b style={{ color: WARN, fontWeight: 600 }}>● {noCredits}</b> out of credits</span>}
               </span>
             )}
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }} title="Renders sent to Dola today">

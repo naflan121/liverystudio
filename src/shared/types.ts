@@ -208,6 +208,8 @@ export interface RenderSettings {
   autoRender: boolean
   /** Pause sending after this many renders in a row fail on the Dola page itself (0 = never). */
   pauseAfterFailures: number
+  /** Local hour (0–23) when Dola's daily video credits come back; out-of-credit accounts rest until then. */
+  creditResetHour: number
 }
 
 export type RenderStatus = 'queued' | 'starting' | 'sending' | 'generating' | 'downloading' | 'done' | 'failed' | 'cancelled'
@@ -323,6 +325,8 @@ export interface NotifySettings {
   queuePaused: boolean
   /** The Studio re-rendered or rewrote a prompt by itself after every take was rejected. */
   autoRetry: boolean
+  /** Every usable Dola account is out of video credits for today. */
+  creditsOut: boolean
 }
 
 /** Why sending to Dola is paused (null/absent = running). */
@@ -354,6 +358,11 @@ export interface DolaInstanceInfo {
   excluded: boolean
   busy: boolean
   cooldownUntil?: number
+  /** Out of Dola video credits until this time (ms). */
+  creditsOutUntil?: number
+  /** From Dola's message: credits one render needs / credits the account had left. */
+  creditsNeed?: number
+  creditsLeft?: number
 }
 
 export interface RenderOverview {

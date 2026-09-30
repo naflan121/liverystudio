@@ -15,7 +15,7 @@ import { closeDb, reviewStatsByScenario, rejectReasonCounts, getEntry as getEntr
 import { initReview, decide as reviewDecide, undo as reviewUndo, rewriteAndRender, rerender, markUnusable } from './review'
 import { renderLessonsBlock } from '../shared/review'
 import { buildReferenceBlock, fillImage1 } from '../shared/references'
-import { initRenderQueue, overview as renderOverview, submit as renderSubmit, cancel as renderCancel, retry as renderRetry, remove as renderRemove, listJobs, updateJob, pauseQueue, resumeQueue, setOnRenderDone } from './render'
+import { initRenderQueue, overview as renderOverview, submit as renderSubmit, cancel as renderCancel, retry as renderRetry, remove as renderRemove, listJobs, updateJob, pauseQueue, resumeQueue, setOnRenderDone, clearCredits } from './render'
 import { SYSTEM, TITLE_SYSTEM, LEARN_SYSTEM, EXTRACT_SYSTEM, TREND_SYSTEM, CAPTION_SYSTEM, CONCEPT_SYSTEM, longLimit, buildUserMessage, titleMsg, captionMsg, buildLearnMessage, buildRedistillMessage, buildConceptMessage, extractMsg, parseScene, parseConcept, trendsMsg, parseVariants } from '../shared/prompts'
 import { cleanTitle, toFilename, clampPlaybook } from '../shared/util'
 import { overusedOperators } from '../shared/brain'
@@ -524,6 +524,7 @@ function registerIpc(): void {
   ipcMain.handle('render:overview', () => renderOverview())
   ipcMain.handle('render:pause', () => { pauseQueue('Paused by you.', false); return true })
   ipcMain.handle('render:resume', () => { resumeQueue(); return true })
+  ipcMain.handle('render:clearCredits', () => { clearCredits(); return true })
   ipcMain.handle('minimax:status', () => miniMaxStatus())
   ipcMain.handle('minimax:test', async (_e, model: string) => {
     try {

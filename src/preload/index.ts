@@ -75,6 +75,8 @@ const api = {
   // --- Livery Studio: queue pause, usage meter, notifications ---
   renderPause: (): Promise<boolean> => ipcRenderer.invoke('render:pause'),
   renderResume: (): Promise<boolean> => ipcRenderer.invoke('render:resume'),
+  /** Forget which Dola accounts are resting on credits (e.g. after topping one up). */
+  renderClearCredits: (): Promise<boolean> => ipcRenderer.invoke('render:clearCredits'),
   usageSummary: (days: number): Promise<{ today: UsageRow[]; byDay: UsageRow[]; byModelToday: UsageRow[]; byProviderToday: UsageRow[] }> => ipcRenderer.invoke('usage:summary', days),
   testNotification: (): Promise<boolean> => ipcRenderer.invoke('notify:test'),
   // --- MiniMax engine + AI pre-check ---

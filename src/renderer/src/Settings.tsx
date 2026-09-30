@@ -62,8 +62,8 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
   const [c, setC] = useState<AppConfig>(() => ({
     ...config,
     review: { ...REVIEW_DEFAULTS, ...(config.review || {}) },
-    notify: { enabled: true, onlyWhenUnfocused: true, renderDone: true, renderFailed: true, capReached: true, queuePaused: true, autoRetry: false, ...(config.notify || {}) },
-    render: { ...config.render, pauseAfterFailures: config.render?.pauseAfterFailures ?? 3 },
+    notify: { enabled: true, onlyWhenUnfocused: true, renderDone: true, renderFailed: true, capReached: true, queuePaused: true, autoRetry: false, creditsOut: true, ...(config.notify || {}) },
+    render: { ...config.render, pauseAfterFailures: config.render?.pauseAfterFailures ?? 3, creditResetHour: config.render?.creditResetHour ?? 0 },
     ai: {
       minimax: { enabled: false, cliPath: '', dailyTokenLimit: 500000, ...(config.ai?.minimax || {}) },
       routes: { title: 'claude:generation', caption: 'claude:generation', scene: 'claude:claude-haiku-4-5', refAircraft: 'claude:claude-haiku-4-5', ...(config.ai?.routes || {}) },
@@ -641,6 +641,7 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
               <Field label="Max at once (0 = one per free instance)">{num(c.render.maxParallel, (n) => setRender({ maxParallel: Math.max(0, n) }))}</Field>
               <Field label="Wait per video (minutes)">{num(c.render.waitMinutes, (n) => setRender({ waitMinutes: Math.max(5, n) }))}</Field>
               <Field label="Pause after page failures in a row (0 = never)">{num(c.render.pauseAfterFailures, (n) => setRender({ pauseAfterFailures: Math.max(0, n) }))}</Field>
+              <Field label="Dola credits reset at (hour, 0–23, your time)">{num(c.render.creditResetHour ?? 0, (n) => setRender({ creditResetHour: Math.min(23, Math.max(0, Math.round(n))) }))}</Field>
             </div>
             <Field label="Reserved instance ids (never used for rendering, comma-separated)">
               <input value={excludeDraft} onChange={(e) => { setExcludeDraft(e.target.value); setRender({ excludeInstances: e.target.value.split(',').map((x) => parseInt(x.trim(), 10)).filter((n) => Number.isInteger(n)) }) }} placeholder="e.g. 5, 16" style={{ ...sel, boxSizing: 'border-box' }} />
@@ -756,6 +757,7 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
                 ['queuePaused', 'Sending paused', 'Dola page looks different'],
                 ['capReached', 'Daily cap reached', 'once a day'],
                 ['autoRetry', 'Automatic retry', 'after every take was rejected'],
+                ['creditsOut', 'Out of Dola credits', 'every account used its daily credits'],
               ] as const).map(([k, label, hint]) => (
                 <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13.5 }}>
                   <input type="checkbox" disabled={!c.notify.enabled} checked={c.notify[k]} onChange={(e) => setNotify({ [k]: e.target.checked })} style={{ width: 16, height: 16, accentColor: ACCENT }} />
