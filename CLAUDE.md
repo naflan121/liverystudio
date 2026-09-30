@@ -28,13 +28,25 @@ Pipeline roadmap:
    uploads and automatic view pulls into scoring.
 
 Data: the Studio has its own userData (`%APPDATA%\Livery Studio`). On first run
-`importFromLiveryLab()` (store.ts) **copies** the Lab's brain files from wherever the
-Lab's `location.json` points (the Google Drive memory folder); the Lab's files are
-never written. `setDataDir` refuses the Lab's folder.
+`importFromLiveryLab()` (store.ts) **copies** the Lab's brain documents and merges
+the Lab's history into the DB; the Lab's files are never written. `setDataDir`
+refuses the Lab's folder.
 
-**Keep render/review/schedule state out of `history.json`.** The renderer rewrites
-history wholesale on every save, so anything the main process updates in the
-background lives in its own main-owned file (like `renders.json`) keyed by entry id.
+**Storage (`main/db.ts`, better-sqlite3, WAL).** Growing, relational data lives in
+SQLite at `%APPDATA%\Livery Studio\studio.db` — tables `entries` (prompt history,
+uncapped) and `render_jobs`, each row = full JSON in `data` + indexed columns.
+Schema changes go in `MIGRATIONS` (append only; `user_version` tracks them). Small
+hand-editable docs stay as files in the data folder (config, playbook, versions,
+learning log, trends, concepts). The DB never lives in a synced folder; dated
+snapshots go to `<data folder>/backups/` (7 kept). The old `history.json` /
+`renders.json` were imported once (union with their `.bak`) and are no longer read.
+`getHistory()` still returns `Entry[]`, so the brain is unchanged; the renderer's
+`persist` sends only changed entries and `setHistory` upserts, never deletes.
+Phase 2+ state (reviews, schedules, posts, metrics) = new tables keyed by entry id.
+
+Native module: after `npm install`, `postinstall` runs `electron-rebuild` for
+better-sqlite3. If the app fails with a NODE_MODULE_VERSION error, run
+`npx electron-rebuild -f -w better-sqlite3`.
 
 ## What the brain is (inherited from Livery Lab)
 

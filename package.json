@@ -8,13 +8,17 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "package:win": "electron-vite build && electron-packager . \"Livery Studio\" --platform=win32 --arch=x64 --out=release --overwrite --app-version=0.2.0 --ignore=\"(^/src|^/release|\\.md$|electron-builder\\.yml|tsconfig|electron\\.vite)\""
+    "package:win": "electron-vite build && electron-packager . \"Livery Studio\" --platform=win32 --arch=x64 --out=release --overwrite --app-version=0.2.0 --ignore=\"(^/src|^/release|\\.md$|electron-builder\\.yml|tsconfig|electron\\.vite)\"",
+    "postinstall": "electron-rebuild -f -w better-sqlite3"
   },
   "dependencies": {
+    "better-sqlite3": "^12.11.1",
     "playwright-core": "^1.63.0"
   },
   "devDependencies": {
     "@electron/packager": "^20.0.1",
+    "@electron/rebuild": "^4.2.0",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.17",
     "@types/react-dom": "^18.3.5",

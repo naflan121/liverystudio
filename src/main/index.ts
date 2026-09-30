@@ -6,8 +6,9 @@ import { callClaude, testCli } from './claude'
 import {
   getConfig, setConfig, getHistory, setHistory, getPlaybook, setPlaybook,
   getPlaybookVersions, appendLearningLog, getLearningLog, resetMemory, dataDir, setDataDir,
-  getTrends, setTrends, getSavedConcepts, setSavedConcepts, importFromLiveryLab, liveryLabDataDir, pullNewFromLab,
+  getTrends, setTrends, getSavedConcepts, setSavedConcepts, importFromLiveryLab, liveryLabDataDir, pullNewFromLab, initStorage, backupStorage,
 } from './store'
+import { closeDb } from './db'
 import { initRenderQueue, overview as renderOverview, submit as renderSubmit, cancel as renderCancel, retry as renderRetry, remove as renderRemove, listJobs } from './render'
 import { SYSTEM, TITLE_SYSTEM, LEARN_SYSTEM, EXTRACT_SYSTEM, TREND_SYSTEM, CAPTION_SYSTEM, CONCEPT_SYSTEM, LONG_PROMPT_CHARS, buildUserMessage, titleMsg, captionMsg, buildLearnMessage, buildRedistillMessage, buildConceptMessage, extractMsg, parseScene, parseConcept, trendsMsg, parseVariants } from '../shared/prompts'
 import { cleanTitle, toFilename, clampPlaybook } from '../shared/util'
@@ -533,17 +534,25 @@ if (!gotLock) {
   })
 
   app.whenReady().then(() => {
+    // Open SQLite; the first time, it imports the old history.json / renders.json.
+    const migrated = initStorage()
     // First run: seed the brain (playbook, history, concepts…) from Livery Lab. Copy only.
     const imported = importFromLiveryLab()
     registerMediaProtocol()
     registerIpc()
     createWindow()
     initRenderQueue(emitLog, (jobs) => { if (win && !win.isDestroyed()) win.webContents.send('render:changed', jobs) })
-    if (imported.imported.length) {
-      win?.webContents.once('did-finish-load', () => emitLog('ok', `First run: imported the Livery Lab brain from ${imported.from} (${imported.imported.join(', ')}). The Lab's own files were not touched.`))
-    }
+    win?.webContents.once('did-finish-load', () => {
+      if (migrated && (migrated.entries || migrated.jobs)) emitLog('ok', `Moved storage to SQLite: ${migrated.entries} prompt(s) and ${migrated.jobs} render job(s) imported. The old JSON files are left in place as a backup.`)
+      if (imported.imported.length) emitLog('ok', `First run: imported the Livery Lab brain from ${imported.from} (${imported.imported.join(', ')}). The Lab's own files were not touched.`)
+    })
+    // Dated DB snapshot into the data folder's backups/ shortly after start, then twice a day.
+    const snapshot = (): void => { backupStorage().catch((e) => emitLog('warn', `Database backup failed: ${e?.message || e}`)) }
+    setTimeout(snapshot, 30_000)
+    setInterval(snapshot, 12 * 60 * 60_000).unref?.()
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
   })
 
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
+  app.on('will-quit', () => closeDb())
 }

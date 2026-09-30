@@ -169,7 +169,7 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
   }
 
   async function reimportFromLab() {
-    if (!confirm('Replace this studio\'s playbook, history and concepts with a fresh copy from Livery Lab? The current studio files are kept as .bak copies. Render jobs are not affected.')) return
+    if (!confirm('Copy Livery Lab\'s playbook, concepts and trends over this studio\'s (current files kept as .bak), and merge its history in? Lab copies overwrite matching prompts; prompts created in the Studio and render jobs are kept.')) return
     const r = await window.api.importFromLab()
     setImportMsg(r.imported.length ? `Imported ${r.imported.length} file(s). Restart the app to reload everything.` : 'Nothing found to import.')
     setPb(await window.api.getPlaybook()); onPlaybook(await window.api.getPlaybook())
@@ -525,7 +525,7 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
 
           <Card title="Data folder · multi-device sync">
             <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>
-              Point this at a <strong>Google Drive folder</strong> to make your history and learned playbook follow you to every PC. <strong>Use a different folder from Livery Lab's</strong> — the two apps must not share data files. On each device, install this app and set the same Drive folder here. <strong>Don’t run the app on two PCs at the same time</strong> — that can cause sync conflicts on the data files.
+              Holds the playbook, config, trends and concepts, plus a <strong>backups</strong> folder with a daily snapshot of the database (last 7 days). Point it at a <strong>Google Drive folder</strong> to keep those off this PC. <strong>Use a different folder from Livery Lab's</strong> — the two apps must not share data files. The live database (prompt history and render jobs) always stays on this PC, because syncing an open database file corrupts it.
             </div>
             <Field label="Current data folder">
               <code style={{ display: 'block', padding: '9px 11px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 12, fontFamily: 'ui-monospace, monospace', color: INK, wordBreak: 'break-all', background: '#faf9f6' }}>{dataPath || '—'}</code>

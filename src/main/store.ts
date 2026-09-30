@@ -2,6 +2,10 @@ import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { AppConfig, Entry, LearningLogEntry, RenderJob, RenderSettings, SavedConcept } from '../shared/types'
+import {
+  getDb, migrateFromJson, backupDb, loadEntries, getEntry, upsertEntries, countEntries, clearEntries,
+  loadRenderJobs, syncRenderJobs,
+} from './db'
 
 // Per-device bootstrap pointer (always in this machine's userData). It records
 // WHERE the actual data lives, so each Windows device can independently point at
@@ -106,7 +110,9 @@ export function dataDir(): string {
   return app.getPath('userData')
 }
 
-const FILES = ['config.json', 'history.json', 'playbook.md', 'playbook-versions.json', 'learning-log.jsonl', 'trends.json', 'concepts.json', 'renders.json']
+// Small documents kept as files in the data folder. History and render jobs live in
+// SQLite (db.ts) in this machine's userData; backups/ holds dated DB snapshots.
+const FILES = ['config.json', 'playbook.md', 'playbook-versions.json', 'learning-log.jsonl', 'trends.json', 'concepts.json']
 
 /** Point the app at a new data folder; copy existing files over if the target lacks them. */
 export function setDataDir(dir: string): { ok: boolean; message: string; dir: string } {
@@ -150,12 +156,22 @@ export function liveryLabDataDir(): string {
   return loc.dataDir && loc.dataDir.trim() ? loc.dataDir : labUserData
 }
 
+function readLabHistory(): Entry[] {
+  return readJsonRecoverable<Entry[]>(path.join(liveryLabDataDir(), 'history.json'), (v) => Array.isArray(v), [])
+}
+
+/**
+ * Copy the Lab's brain documents into the Studio's data folder and load the Lab's
+ * history into the database. First run: only when the Studio has no brain yet.
+ * force (Settings → Re-import): Lab copies overwrite matching entries, but prompts
+ * created in the Studio are kept (render jobs point at them).
+ */
 export function importFromLiveryLab(force = false): { imported: string[]; from: string } {
   const from = liveryLabDataDir()
   const to = dataDir()
   const imported: string[] = []
   if (path.resolve(from) === path.resolve(to)) return { imported, from }
-  const hasBrain = fs.existsSync(path.join(to, 'history.json')) || fs.existsSync(path.join(to, 'playbook.md'))
+  const hasBrain = countEntries() > 0 || fs.existsSync(path.join(to, 'playbook.md'))
   if (hasBrain && !force) return { imported, from }
   for (const f of FILES) {
     const src = path.join(from, f)
@@ -167,23 +183,36 @@ export function importFromLiveryLab(force = false): { imported: string[]; from: 
       imported.push(f)
     } catch { /* skip unreadable file (e.g. Drive offline) */ }
   }
+  const labHistory = readLabHistory()
+  if (labHistory.length) { upsertEntries(labHistory); imported.push(`history (${labHistory.length} prompts)`) }
   return { imported, from }
 }
 
 const p = (f: string) => path.join(dataDir(), f)
 
-// --- Render jobs (main-process owned) ------------------------------------------
-// Kept out of history.json on purpose: the renderer rewrites history wholesale on
-// every save, so background render updates living there would race with scoring.
+/**
+ * Open the database and, the first time, import the JSON history/render files the
+ * app used before SQLite (from the data folder). Call once at startup, before
+ * anything reads history.
+ */
+export function initStorage(): { entries: number; jobs: number } | null {
+  getDb()
+  return migrateFromJson(dataDir())
+}
+
+/** Snapshot the DB into <data folder>/backups (daily, last 7 kept). */
+export function backupStorage(): Promise<string | null> {
+  return backupDb(dataDir())
+}
+
+// --- Render jobs (main-process owned, SQLite) ------------------------------------
 
 export function getRenderJobs(): RenderJob[] {
-  return readJsonRecoverable<RenderJob[]>(p('renders.json'), (v) => Array.isArray(v), [])
+  return loadRenderJobs()
 }
 
 export function setRenderJobs(jobs: RenderJob[]): void {
-  const file = p('renders.json')
-  backup(file)
-  writeJson(file, jobs.slice(0, 1000))
+  syncRenderJobs(jobs)
 }
 
 // --- Config --------------------------------------------------------------------
@@ -208,10 +237,10 @@ export function setConfig(patch: Partial<AppConfig>): AppConfig {
 
 // --- History / playbook / log --------------------------------------------------
 
+// History lives in SQLite (db.ts), newest first, uncapped. The brain still sees a
+// plain Entry[] exactly as before.
 export function getHistory(): Entry[] {
-  // History is the user's irreplaceable learning record — recover from the
-  // backup if the live file was lost or corrupted (e.g. a Drive sync conflict).
-  return readJsonRecoverable<Entry[]>(p('history.json'), (v) => Array.isArray(v), [])
+  return loadEntries()
 }
 
 /**
@@ -220,21 +249,15 @@ export function getHistory(): Entry[] {
  * (they may have been scored differently here) and the Lab's file is only read.
  */
 export function pullNewFromLab(): { history: Entry[]; added: number } {
-  const current = getHistory()
-  const lab = readJsonRecoverable<Entry[]>(path.join(liveryLabDataDir(), 'history.json'), (v) => Array.isArray(v), [])
-  const have = new Set(current.map((h) => h.id))
-  const fresh = lab.filter((h) => h && typeof h.id === 'number' && !have.has(h.id))
-  if (!fresh.length) return { history: current, added: 0 }
-  // Entry ids are Date.now() timestamps, so sorting by id keeps history newest-first.
-  const merged = [...fresh, ...current].sort((a, b) => b.id - a.id)
-  setHistory(merged)
+  const lab = readLabHistory()
+  const fresh = lab.filter((h) => h && typeof h.id === 'number' && !getEntry(h.id))
+  if (fresh.length) upsertEntries(fresh)
   return { history: getHistory(), added: fresh.length }
 }
 
+/** Save entries (insert or update; unchanged rows are skipped). Never deletes — reset uses resetMemory. */
 export function setHistory(entries: Entry[]): void {
-  const file = p('history.json')
-  backup(file)
-  writeJson(file, entries.slice(0, 500))
+  upsertEntries(entries)
 }
 
 export function getPlaybook(): string {
@@ -324,7 +347,9 @@ export function setSavedConcepts(list: SavedConcept[]): void {
 }
 
 export function resetMemory(): void {
-  for (const f of ['history.json', 'playbook.md', 'playbook-versions.json', 'learning-log.jsonl']) {
+  for (const f of ['playbook.md', 'playbook-versions.json', 'learning-log.jsonl']) {
     try { const fp = p(f); if (fs.existsSync(fp)) fs.unlinkSync(fp) } catch { /* ignore */ }
   }
+  // Render jobs are kept: they point at real video files on disk.
+  clearEntries()
 }

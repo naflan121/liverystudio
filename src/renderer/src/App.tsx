@@ -180,11 +180,14 @@ export function App() {
   // stale `history` in async closures (e.g. the scene-identify callback after
   // scoring), so a slow background step could silently clobber entries added
   // in the meantime. The disk write rides inside the updater — idempotent, so
-  // a double-invoke in dev StrictMode is harmless.
+  // a double-invoke in dev StrictMode is harmless. Only entries that are new or
+  // changed (new object identity) are sent; the database upserts them by id.
   const persist = useCallback((updater: (prev: Entry[]) => Entry[]) => {
     setHistory((prev) => {
       const next = updater(prev)
-      window.api.setHistory(next).catch(() => { /* ignore */ })
+      const before = new Set(prev)
+      const changed = next.filter((e) => !before.has(e))
+      if (changed.length) window.api.setHistory(changed).catch(() => { /* ignore */ })
       return next
     })
   }, [])
