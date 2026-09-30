@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { INK, PAPER, LINE, MUTE, ACCENT, GOOD, BAD, SCREEN, SCREEN_TX, lbl, sel, ghostBtn } from './ui'
+import { INK, PAPER, LINE, MUTE, ACCENT, GOOD, BAD, SCREEN, SCREEN_TX, lbl, sel, ghostBtn, eyebrow, pageTitle } from './ui'
 import { AIRCRAFT, CAMERA, CROWD, ENV, groupScenarios } from '@shared/domain'
 import { trendMasterPrompt } from '@shared/prompts'
 import { winRateStats, comboWinRates, operatorFrequency, DEFAULT_WIN_RATE_DIMS } from '@shared/brain'
@@ -22,7 +22,7 @@ const MODELS = [
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div style={{ border: `1px solid ${LINE}`, borderRadius: 12, padding: '16px 18px', background: '#fff' }}>
+    <div style={{ border: `1px solid ${LINE}`, borderRadius: 12, padding: '16px 18px', background: 'var(--surface)' }}>
       <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 14, letterSpacing: 0.3 }}>{title}</div>
       <div style={{ display: 'grid', gap: 14 }}>{children}</div>
     </div>
@@ -231,17 +231,17 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
   )
 
   return (
-    <div style={{ minHeight: '100%', background: PAPER, color: INK, fontFamily: 'ui-sans-serif, system-ui, sans-serif' }}>
-      <div style={{ maxWidth: 880, margin: '0 auto', padding: 18 }}>
+    <div style={{ minHeight: '100%', background: PAPER, color: INK, fontFamily: 'var(--f-body)' }}>
+      <div style={{ maxWidth: 880, margin: '0 auto', padding: '24px 24px 32px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
           <div>
-            <div style={{ fontSize: 11, letterSpacing: 2, textTransform: 'uppercase', color: ACCENT, fontWeight: 600 }}>Settings</div>
-            <div style={{ fontSize: 22, fontWeight: 600 }}>Configuration</div>
+            <div style={eyebrow}>Settings</div>
+            <h1 style={{ ...pageTitle, marginTop: 2 }}>Configuration</h1>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             {savedAt > 0 && <span style={{ color: GOOD, fontSize: 13, fontWeight: 600 }}>Saved</span>}
             <button onClick={save} style={{ background: ACCENT, color: '#fff', border: 'none', borderRadius: 10, padding: '10px 18px', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>Save settings</button>
-            <button onClick={onClose} style={ghostBtn}>Back to lab</button>
+            
           </div>
         </div>
 
@@ -250,11 +250,11 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', borderBottom: '1px solid #34322b' }}>
               <span style={{ width: 9, height: 9, borderRadius: '50%', background: (refreshingTrends || redistilling || backfilling || testing) ? '#f2a55e' : logs.length ? '#7fc59c' : '#55524a' }} />
               <span style={{ fontSize: 10, letterSpacing: 2, textTransform: 'uppercase', color: '#8d887b', fontWeight: 600 }}>Activity</span>
-              <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11, color: '#55524a' }}>{logs.length}</span>
+              <span style={{ fontFamily: 'var(--f-mono)', fontSize: 11, color: '#55524a' }}>{logs.length}</span>
               {(refreshingTrends || redistilling || backfilling || testing) && <span style={{ fontSize: 11, color: '#f2a55e' }}>working…</span>}
               {logs.length > 0 && <button onClick={() => setLogs([])} style={{ marginLeft: 'auto', background: 'transparent', border: '1px solid #46443c', color: SCREEN_TX, borderRadius: 7, padding: '2px 9px', fontSize: 11, cursor: 'pointer' }}>Clear</button>}
             </div>
-            <div ref={logBoxRef} style={{ maxHeight: 160, overflowY: 'auto', padding: '8px 14px', fontFamily: 'ui-monospace, SFMono-Regular, monospace', fontSize: 11.5, lineHeight: 1.65 }}>
+            <div ref={logBoxRef} style={{ maxHeight: 160, overflowY: 'auto', padding: '8px 14px', fontFamily: 'var(--f-mono)', fontSize: 11.5, lineHeight: 1.65 }}>
               {logs.length === 0
                 ? <div style={{ color: '#55524a' }}>Backend activity streams here in real time…</div>
                 : logs.map((l, i) => (
@@ -270,7 +270,7 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
         <div style={{ display: 'grid', gap: 16 }}>
           <Card title="AI / Claude Code CLI">
             <Field label="Claude CLI path (leave blank to auto-detect)">
-              <input value={c.cliPath} onChange={(e) => set({ cliPath: e.target.value })} placeholder="auto-detect" style={{ ...sel, boxSizing: 'border-box', fontFamily: 'ui-monospace, monospace', fontSize: 12.5 }} />
+              <input value={c.cliPath} onChange={(e) => set({ cliPath: e.target.value })} placeholder="auto-detect" style={{ ...sel, boxSizing: 'border-box', fontFamily: 'var(--f-mono)', fontSize: 12.5 }} />
             </Field>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
               <button onClick={runTest} disabled={testing} style={{ ...ghostBtn, opacity: testing ? 0.6 : 1 }}>{testing ? 'Testing…' : 'Test connection'}</button>
@@ -314,7 +314,7 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
             </label>
             <Field label="Playbook size budget (characters)">{num(c.playbookBudget, (n) => set({ playbookBudget: n }))}</Field>
             <Field label="Current playbook (editable — this is what gets sent to the model)">
-              <textarea value={pb} onChange={(e) => setPb(e.target.value)} rows={10} placeholder="Empty — fills in as you score reels." style={{ width: '100%', padding: '12px 14px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 12, boxSizing: 'border-box', resize: 'vertical', fontFamily: 'ui-monospace, monospace', background: SCREEN, color: SCREEN_TX }} />
+              <textarea value={pb} onChange={(e) => setPb(e.target.value)} rows={10} placeholder="Empty — fills in as you score reels." style={{ width: '100%', padding: '12px 14px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 12, boxSizing: 'border-box', resize: 'vertical', fontFamily: 'var(--f-mono)', background: SCREEN, color: SCREEN_TX }} />
             </Field>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <button onClick={savePlaybook} style={ghostBtn}>Save playbook</button>
@@ -349,7 +349,7 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
                     <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>{d.title}</div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
                       {d.rows.map((r) => (
-                        <span key={r.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${LINE}`, borderRadius: 20, padding: '5px 12px', fontSize: 12.5, background: '#faf9f6' }}>
+                        <span key={r.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${LINE}`, borderRadius: 20, padding: '5px 12px', fontSize: 12.5, background: 'var(--surface-2)' }}>
                           {r.label}
                           <strong style={{ color: r.pct >= 50 ? GOOD : r.pct >= 25 ? INK : BAD }}>{r.wins}/{r.total}</strong>
                           <span style={{ color: MUTE }}>{r.pct}%</span>
@@ -365,7 +365,7 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
                 <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>Best combos · scenario &times; camera</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
                   {bestCombos.map((c) => (
-                    <span key={c.a + '|' + c.b} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${LINE}`, borderRadius: 20, padding: '5px 12px', fontSize: 12.5, background: '#faf9f6' }}>
+                    <span key={c.a + '|' + c.b} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${LINE}`, borderRadius: 20, padding: '5px 12px', fontSize: 12.5, background: 'var(--surface-2)' }}>
                       {c.a} &middot; {c.b}
                       <strong style={{ color: c.pct >= 50 ? GOOD : c.pct >= 25 ? INK : BAD }}>{c.wins}/{c.total}</strong>
                       <span style={{ color: MUTE }}>{c.pct}%</span>
@@ -380,7 +380,7 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
                 <div style={{ fontSize: 12, color: MUTE, marginBottom: 6 }}>Aircraft/operators eating a disproportionate share of the last 30 picks page-wide — new generations actively steer away from these regardless of scenario.</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
                   {overused.map((o) => (
-                    <span key={o.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${BAD}`, borderRadius: 20, padding: '5px 12px', fontSize: 12.5, background: '#fff' }}>
+                    <span key={o.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${BAD}`, borderRadius: 20, padding: '5px 12px', fontSize: 12.5, background: 'var(--surface)' }}>
                       {o.label}
                       <strong style={{ color: BAD }}>{o.count}/{o.total}</strong>
                       <span style={{ color: MUTE }}>{o.pct}%</span>
@@ -411,7 +411,7 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
                         <div style={{ fontSize: 11, color: MUTE, marginBottom: 5 }}>Aircraft · {aircraft.length}</div>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
                           {aircraft.map(([name, n]) => (
-                            <span key={name} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${LINE}`, borderRadius: 20, padding: '5px 12px', fontSize: 12.5, background: '#faf9f6' }}>
+                            <span key={name} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${LINE}`, borderRadius: 20, padding: '5px 12px', fontSize: 12.5, background: 'var(--surface-2)' }}>
                               {name}{n > 1 && <strong style={{ color: ACCENT }}>×{n}</strong>}
                             </span>
                           ))}
@@ -423,7 +423,7 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
                         <div style={{ fontSize: 11, color: MUTE, marginBottom: 5 }}>Settings · {envs.length}</div>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
                           {envs.map(([name, n]) => (
-                            <span key={name} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${LINE}`, borderRadius: 20, padding: '5px 12px', fontSize: 12.5, background: '#fff' }}>
+                            <span key={name} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${LINE}`, borderRadius: 20, padding: '5px 12px', fontSize: 12.5, background: 'var(--surface)' }}>
                               {name}{n > 1 && <strong style={{ color: ACCENT }}>×{n}</strong>}
                             </span>
                           ))}
@@ -469,7 +469,7 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
             </div>
             {trends.text ? (
               <Field label="Current trends digest (what gets sent when the checkbox is on)">
-                <textarea value={trends.text} readOnly rows={8} style={{ width: '100%', padding: '12px 14px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 12, boxSizing: 'border-box', resize: 'vertical', fontFamily: 'ui-monospace, monospace', background: SCREEN, color: SCREEN_TX }} />
+                <textarea value={trends.text} readOnly rows={8} style={{ width: '100%', padding: '12px 14px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 12, boxSizing: 'border-box', resize: 'vertical', fontFamily: 'var(--f-mono)', background: SCREEN, color: SCREEN_TX }} />
               </Field>
             ) : null}
             <div style={{ borderTop: `1px solid ${LINE}`, paddingTop: 12, display: 'grid', gap: 8 }}>
@@ -503,7 +503,7 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
             <Field label="Additional instructions (optional — sent after the settings lines, before the prompt)">
               <textarea value={c.render.extraInstructions || ''} onChange={(e) => setRender({ extraInstructions: e.target.value })} rows={4} placeholder="e.g. Keep the aircraft's orientation constant for the whole clip." style={{ width: '100%', padding: '10px 12px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 13, boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit', color: INK }} />
             </Field>
-            <div style={{ display: 'grid', gap: 10, border: `1px solid ${LINE}`, borderRadius: 10, padding: '12px 14px', background: '#faf9f6' }}>
+            <div style={{ display: 'grid', gap: 10, border: `1px solid ${LINE}`, borderRadius: 10, padding: '12px 14px', background: 'var(--surface-2)' }}>
               <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', fontSize: 13.5 }}>
                 <input type="checkbox" checked={c.render.referenceImages} onChange={(e) => setRender({ referenceImages: e.target.checked })} style={{ width: 16, height: 16, accentColor: ACCENT, marginTop: 2 }} />
                 <span>Instruct Dola to find reference images <span style={{ color: MUTE }}>— default for every render; each Render button has its own checkbox to switch it off once. Naming the aircraft costs one tiny Haiku call per prompt (re-renders reuse it). Skipped automatically when the prompt names no specific aircraft and the scenario has no Image 2.</span></span>
@@ -525,13 +525,13 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
               </details>
             </div>
             <Field label="What Dola receives">
-              <pre style={{ margin: 0, fontSize: 11.5, color: MUTE, fontFamily: 'ui-monospace, monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: '#faf9f6', border: `1px solid ${LINE}`, borderRadius: 9, padding: '9px 11px', lineHeight: 1.55 }}>
+              <pre style={{ margin: 0, fontSize: 11.5, color: MUTE, fontFamily: 'var(--f-mono)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: 'var(--surface-2)', border: `1px solid ${LINE}`, borderRadius: 9, padding: '9px 11px', lineHeight: 1.55 }}>
                 {[c.render.model, c.render.duration, c.render.aspect, 'NotifyHuman Artifacts', 'Dont ask me any more confirmation go ahead', '', ...(c.render.extraInstructions?.trim() ? [c.render.extraInstructions.trim(), ''] : []), ...(c.render.referenceImages ? [buildReferenceBlock([fillImage1(c.render.referenceImage1, 'Delta Air Lines Boeing 757-200'), '[scenario Image 2, if set]']), ''] : []), '[prompt]'].join('\n')}
               </pre>
             </Field>
             <Field label="Video folder">
               <div style={{ display: 'flex', gap: 8 }}>
-                <input value={c.render.outputDir} onChange={(e) => setRender({ outputDir: e.target.value })} style={{ ...sel, boxSizing: 'border-box', fontFamily: 'ui-monospace, monospace', fontSize: 12.5 }} />
+                <input value={c.render.outputDir} onChange={(e) => setRender({ outputDir: e.target.value })} style={{ ...sel, boxSizing: 'border-box', fontFamily: 'var(--f-mono)', fontSize: 12.5 }} />
                 <button onClick={browseOutput} style={{ ...ghostBtn, flexShrink: 0 }}>Choose…</button>
               </div>
             </Field>
@@ -574,7 +574,7 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
               Cost: <strong>re-render</strong> uses one Dola render from today's cap and no Claude tokens. <strong>Rewrite</strong> adds one Claude call, then the render. Retries are counted per prompt (including its rewrites), so a stubborn prompt stops after the limit and waits for you.
             </div>
             <Field label="Render lessons (editable — what gets added to new prompts)">
-              <textarea value={lessons} onChange={(e) => setLessons(e.target.value)} rows={7} placeholder="Empty until you reject a render with learning on." style={{ width: '100%', padding: '10px 12px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 12.5, boxSizing: 'border-box', resize: 'vertical', fontFamily: 'ui-monospace, monospace', color: INK }} />
+              <textarea value={lessons} onChange={(e) => setLessons(e.target.value)} rows={7} placeholder="Empty until you reject a render with learning on." style={{ width: '100%', padding: '10px 12px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 12.5, boxSizing: 'border-box', resize: 'vertical', fontFamily: 'var(--f-mono)', color: INK }} />
             </Field>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <button onClick={saveLessons} style={ghostBtn}>Save lessons</button>
@@ -588,7 +588,7 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
               Livery Studio started with a <strong>copy</strong> of Livery Lab's brain. The two now learn separately — the Lab's files are never written from here. Re-import only if you kept working in the Lab and want its latest playbook and history here.
             </div>
             <Field label="Livery Lab data folder">
-              <code style={{ display: 'block', padding: '9px 11px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 12, fontFamily: 'ui-monospace, monospace', color: INK, wordBreak: 'break-all', background: '#faf9f6' }}>{labDir || '—'}</code>
+              <code style={{ display: 'block', padding: '9px 11px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 12, fontFamily: 'var(--f-mono)', color: INK, wordBreak: 'break-all', background: 'var(--surface-2)' }}>{labDir || '—'}</code>
             </Field>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <button onClick={reimportFromLab} style={ghostBtn}>Re-import from Livery Lab…</button>
@@ -601,7 +601,7 @@ export function Settings({ config, onSave, onClose, playbook, onPlaybook, onRese
               Holds the playbook, config, trends and concepts, plus a <strong>backups</strong> folder with a daily snapshot of the database (last 7 days). Point it at a <strong>Google Drive folder</strong> to keep those off this PC. <strong>Use a different folder from Livery Lab's</strong> — the two apps must not share data files. The live database (prompt history and render jobs) always stays on this PC, because syncing an open database file corrupts it.
             </div>
             <Field label="Current data folder">
-              <code style={{ display: 'block', padding: '9px 11px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 12, fontFamily: 'ui-monospace, monospace', color: INK, wordBreak: 'break-all', background: '#faf9f6' }}>{dataPath || '—'}</code>
+              <code style={{ display: 'block', padding: '9px 11px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 12, fontFamily: 'var(--f-mono)', color: INK, wordBreak: 'break-all', background: 'var(--surface-2)' }}>{dataPath || '—'}</code>
             </Field>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <button onClick={browseData} style={ghostBtn}>Choose folder…</button>

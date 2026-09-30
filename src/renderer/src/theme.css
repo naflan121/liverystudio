@@ -1,0 +1,127 @@
+/* Livery Studio design tokens — "flight deck".
+   Dark (instrument panel) is the default; light keeps the Livery Lab paper palette.
+   <html data-theme="dark|light"> forces a theme; data-theme="system" follows Windows.
+   Status colours were checked with the dataviz validator: all pass contrast on their
+   surface; red vs amber is close under deutan, so every status carries a text label. */
+
+@import '@fontsource/barlow-condensed/500.css';
+@import '@fontsource/barlow-condensed/600.css';
+@import '@fontsource/barlow-condensed/700.css';
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+
+:root {
+  --f-display: 'Barlow Condensed', 'Arial Narrow', 'Segoe UI', sans-serif;
+  --f-body: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+  --f-mono: 'IBM Plex Mono', 'Cascadia Mono', Consolas, monospace;
+
+  /* light */
+  --bg: #FBFAF7;
+  --sidebar: #F1EEE7;
+  --surface: #FFFFFF;
+  --surface-2: #F6F4EF;
+  --line: #DAD6CC;
+  --ink: #1C1B19;
+  --on-ink: #FFFFFF;
+  --mute: #6B6862;
+  --accent: #E85D1A;         /* brand + primary actions only */
+  --accent-soft: #FBEADF;
+  --info: #1F6FB8;           /* in progress / awaiting */
+  --info-soft: #E3EEF8;
+  --good: #1F7A4D;
+  --good-soft: #E3F1E9;
+  --warn: #C27C00;
+  --bad: #B23A2E;
+  --bad-soft: #F6E4E1;
+  --viral: #A8358F;
+  --wait: #9A968C;
+  --track: #EEEAE1;
+  --toggle-off: #CBC7BD;
+  --screen: #1A1915;
+  --screen-tx: #ECE7DB;
+  --shadow: 0 1px 2px rgba(28, 27, 25, .06), 0 4px 16px rgba(28, 27, 25, .05);
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --bg: #0E1116;
+  --sidebar: #0A0D11;
+  --surface: #161A21;
+  --surface-2: #1B2029;
+  --line: #2A313C;
+  --ink: #E6E9EE;
+  --on-ink: #0E1116;
+  --mute: #8C95A5;
+  --accent: #E0611C;
+  --accent-soft: rgba(224, 97, 28, .16);
+  --info: #3A8EDB;
+  --info-soft: rgba(58, 142, 219, .16);
+  --good: #2E9E66;
+  --good-soft: rgba(46, 158, 102, .16);
+  --warn: #CF9425;
+  --bad: #E0524A;
+  --bad-soft: rgba(224, 82, 74, .16);
+  --viral: #C84DB2;
+  --wait: #6F7888;
+  --track: #232933;
+  --toggle-off: #3A4250;
+  --screen: #0A0C10;
+  --screen-tx: #D8DEE8;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 6px 24px rgba(0, 0, 0, .25);
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme='system'] {
+    --bg: #0E1116;
+    --sidebar: #0A0D11;
+    --surface: #161A21;
+    --surface-2: #1B2029;
+    --line: #2A313C;
+    --ink: #E6E9EE;
+    --on-ink: #0E1116;
+    --mute: #8C95A5;
+    --accent: #E0611C;
+    --accent-soft: rgba(224, 97, 28, .16);
+    --info: #3A8EDB;
+    --info-soft: rgba(58, 142, 219, .16);
+    --good: #2E9E66;
+    --good-soft: rgba(46, 158, 102, .16);
+    --warn: #CF9425;
+    --bad: #E0524A;
+    --bad-soft: rgba(224, 82, 74, .16);
+    --viral: #C84DB2;
+    --wait: #6F7888;
+    --track: #232933;
+    --toggle-off: #3A4250;
+    --screen: #0A0C10;
+    --screen-tx: #D8DEE8;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 6px 24px rgba(0, 0, 0, .25);
+    color-scheme: dark;
+  }
+}
+
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--f-body);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select, textarea { font-family: inherit; }
+input, select, textarea { color: var(--ink); background: var(--surface); }
+input::placeholder, textarea::placeholder { color: var(--mute); opacity: .8; }
+:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+code { font-family: var(--f-mono); font-size: .92em; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 10px; border: 2px solid var(--bg); }
+::-webkit-scrollbar-track { background: transparent; }
+
+@keyframes ll-spin { to { transform: rotate(360deg) } }
+@keyframes ll-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }

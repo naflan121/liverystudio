@@ -38,7 +38,7 @@ function createWindow(): void {
     height: 880,
     minWidth: 700,
     minHeight: 600,
-    backgroundColor: '#FBFAF7',
+    backgroundColor: '#0E1116',
     title: 'Livery Studio',
     autoHideMenuBar: true,
     webPreferences: {

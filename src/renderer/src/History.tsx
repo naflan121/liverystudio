@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react'
-import { INK, PAPER, LINE, MUTE, ACCENT, WAIT, ghostBtn, sel } from './ui'
+import { INK, PAPER, LINE, MUTE, ACCENT, WAIT, ghostBtn, sel, eyebrow, pageTitle } from './ui'
 import { REACH } from '@shared/domain'
 import { snippet } from '@shared/util'
 import type { Entry, ReachId } from '@shared/types'
 
 function statusMeta(h: Entry) {
-  if (h.status === 'scored') { const r = REACH.find((x) => x.id === h.reach); return { label: r ? r.label : 'Scored', color: r ? r.color : '#1F7A4D' } }
+  if (h.status === 'scored') { const r = REACH.find((x) => x.id === h.reach); return { label: r ? r.label : 'Scored', color: r ? r.color : 'var(--good)' } }
   if (h.status === 'posted') return { label: 'Posted', color: ACCENT }
   if (h.status === 'skipped') return { label: 'Skipped', color: MUTE }
   return { label: 'Awaiting', color: WAIT }
@@ -56,14 +56,14 @@ export function History({ entries, openId, onOpen, onClose }: {
   }, [entries, filter, reachFilter, q])
 
   return (
-    <div style={{ minHeight: '100%', background: PAPER, color: INK, fontFamily: 'ui-sans-serif, system-ui, sans-serif' }}>
-      <div style={{ maxWidth: 1100, margin: '0 auto', padding: 18 }}>
+    <div style={{ minHeight: '100%', background: PAPER, color: INK, fontFamily: 'var(--f-body)' }}>
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 24px 32px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
           <div>
-            <div style={{ fontSize: 11, letterSpacing: 2, textTransform: 'uppercase', color: ACCENT, fontWeight: 600 }}>History</div>
-            <div style={{ fontSize: 22, fontWeight: 600 }}>Previous prompts</div>
+            <div style={eyebrow}>History</div>
+            <h1 style={{ ...pageTitle, marginTop: 2 }}>Previous prompts</h1>
           </div>
-          <button onClick={onClose} style={ghostBtn}>Back to lab</button>
+          
         </div>
 
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
@@ -81,7 +81,7 @@ export function History({ entries, openId, onOpen, onClose }: {
 
         <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginBottom: 16 }}>
           {[['toscore', 'To score'], ['scored', 'Scored'], ['skipped', 'Skipped'], ['all', 'All']].map(([id, label]) => (
-            <button key={id} onClick={() => setFilter(id)} style={{ borderRadius: 20, padding: '5px 13px', fontSize: 12.5, cursor: 'pointer', fontWeight: filter === id ? 600 : 400, border: `1px solid ${filter === id ? ACCENT : LINE}`, background: filter === id ? '#FBEADF' : '#fff', color: filter === id ? ACCENT : INK }}>{label} {counts[id] || 0}</button>
+            <button key={id} onClick={() => setFilter(id)} style={{ borderRadius: 20, padding: '5px 13px', fontSize: 12.5, cursor: 'pointer', fontWeight: filter === id ? 600 : 400, border: `1px solid ${filter === id ? ACCENT : LINE}`, background: filter === id ? 'var(--accent-soft)' : 'var(--surface)', color: filter === id ? ACCENT : INK }}>{label} {counts[id] || 0}</button>
           ))}
           <span style={{ marginLeft: 'auto', fontSize: 12.5, color: MUTE, alignSelf: 'center' }}>{results.length} of {entries.length}</span>
         </div>
@@ -96,7 +96,7 @@ export function History({ entries, openId, onOpen, onClose }: {
               const m = statusMeta(h)
               const open = openId === h.id
               return (
-                <button key={h.id} onClick={() => onOpen(h)} style={{ textAlign: 'left', cursor: 'pointer', border: `1px solid ${open ? ACCENT : LINE}`, background: open ? '#FBEADF' : '#fff', borderRadius: 10, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                <button key={h.id} onClick={() => onOpen(h)} style={{ textAlign: 'left', cursor: 'pointer', border: `1px solid ${open ? ACCENT : LINE}`, background: open ? 'var(--accent-soft)' : 'var(--surface)', borderRadius: 10, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span style={{ width: 9, height: 9, borderRadius: '50%', background: m.color, flexShrink: 0 }} />
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={{ fontSize: 12.5, fontWeight: 600, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.title || snippet(h.text)}</span>

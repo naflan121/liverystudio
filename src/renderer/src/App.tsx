@@ -1,61 +1,17 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
-  INK, PAPER, LINE, MUTE, ACCENT, GOOD, BAD, VIRAL, WAIT, SCREEN, SCREEN_TX, lbl, sel, ghostBtn, primaryBtn, card,
+  INK, PAPER, LINE, MUTE, ACCENT, INFO, GOOD, BAD, VIRAL, WAIT, SCREEN, SCREEN_TX, lbl, sel, ghostBtn, primaryBtn, card,
 } from './ui'
 import { REACH, ILLUSION_TAGS, AIRCRAFT, CAMERA, CROWD, ENV, REGION, SCENARIOS, groupScenarios, pickRandomScenario } from '@shared/domain'
 import { snippet, toFilename, splitSections, parseViews } from '@shared/util'
 import { topInsights } from '@shared/brain'
-import type { AppConfig, Entry, ReachId, LogLine, LogLevel, Scenario, SavedConcept, RenderJob } from '@shared/types'
+import type { AppConfig, Entry, ReachId, LogLine, Scenario, SavedConcept, RenderJob, RenderOverview } from '@shared/types'
 import { Settings } from './Settings'
 import { History } from './History'
 import { Renders, RenderStrip, RENDER_META, latestJobByEntry } from './Renders'
 import { Review } from './Review'
-
-const LOG_COLORS: Record<LogLevel, string> = {
-  info: '#9c968a', step: '#f2a55e', ok: '#7fc59c', warn: '#e2b53c', err: '#ff8a6b',
-}
-function logTime(ts: number): string {
-  const d = new Date(ts)
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-}
-
-function LogPanel({ logs, onClear }: { logs: LogLine[]; onClear: () => void }) {
-  const [open, setOpen] = useState(true)
-  const [follow, setFollow] = useState(true)
-  const boxRef = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    if (open && follow && boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight
-  }, [logs, open, follow])
-
-  return (
-    <div style={{ background: SCREEN, borderRadius: 12, overflow: 'hidden' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', borderBottom: open ? '1px solid #34322b' : 'none' }}>
-        <span style={{ width: 9, height: 9, borderRadius: '50%', background: logs.length ? '#7fc59c' : '#55524a', flexShrink: 0 }} />
-        <span style={{ fontSize: 10, letterSpacing: 2, textTransform: 'uppercase', color: '#8d887b', fontWeight: 600 }}>Activity log</span>
-        <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11, color: '#55524a' }}>{logs.length}</span>
-        <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-          <button onClick={() => setFollow((f) => !f)} title="Auto-scroll to newest" style={{ background: 'transparent', border: '1px solid #46443c', color: follow ? '#7fc59c' : '#8d887b', borderRadius: 7, padding: '3px 9px', fontSize: 11, cursor: 'pointer' }}>{follow ? 'Follow ✓' : 'Follow'}</button>
-          <button onClick={onClear} style={{ background: 'transparent', border: '1px solid #46443c', color: SCREEN_TX, borderRadius: 7, padding: '3px 9px', fontSize: 11, cursor: 'pointer' }}>Clear</button>
-          <button onClick={() => setOpen((o) => !o)} style={{ background: 'transparent', border: '1px solid #46443c', color: SCREEN_TX, borderRadius: 7, padding: '3px 9px', fontSize: 11, cursor: 'pointer' }}>{open ? 'Hide' : 'Show'}</button>
-        </span>
-      </div>
-      {open && (
-        <div ref={boxRef} style={{ maxHeight: 220, overflowY: 'auto', padding: '10px 14px', fontFamily: 'ui-monospace, SFMono-Regular, monospace', fontSize: 11.5, lineHeight: 1.7 }}>
-          {logs.length === 0
-            ? <div style={{ color: '#55524a' }}>Waiting for activity… generate a prompt or log a result to see the backend work here.</div>
-            : logs.map((l, i) => (
-              <div key={i} style={{ display: 'flex', gap: 9, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                <span style={{ color: '#55524a', flexShrink: 0 }}>{logTime(l.ts)}</span>
-                <span style={{ color: LOG_COLORS[l.level], flex: 1 }}>{l.msg}</span>
-              </div>
-            ))}
-        </div>
-      )}
-    </div>
-  )
-}
+import { Shell, PageHeader, loadTheme, applyTheme, type View, type Theme } from './Shell'
+import { Today } from './Today'
 
 function copyText(s: string) {
   s = s || ''
@@ -78,7 +34,7 @@ function CopyBtn({ text, style, label }: { text: string; style?: React.CSSProper
 }
 
 function statusMeta(h: Entry) {
-  if (h.status === 'scored') { const r = REACH.find((x) => x.id === h.reach); return { label: r ? r.label : 'Scored', color: r ? r.color : '#1F7A4D' } }
+  if (h.status === 'scored') { const r = REACH.find((x) => x.id === h.reach); return { label: r ? r.label : 'Scored', color: r ? r.color : 'var(--good)' } }
   if (h.status === 'posted') return { label: 'Posted', color: ACCENT }
   if (h.status === 'skipped') return { label: 'Skipped', color: MUTE }
   return { label: 'Awaiting', color: WAIT }
@@ -95,7 +51,10 @@ function ago(h: Entry, posted?: boolean) {
 
 export function App() {
   const [config, setConfig] = useState<AppConfig | null>(null)
-  const [view, setView] = useState<'lab' | 'settings' | 'history' | 'renders' | 'review'>('lab')
+  const [view, setView] = useState<View>('today')
+  const [theme, setTheme] = useState<Theme>(loadTheme)
+  useEffect(() => { applyTheme(theme) }, [theme])
+  const [overview, setOverview] = useState<RenderOverview | null>(null)
   const [renderJobs, setRenderJobs] = useState<RenderJob[]>([])
   const latestRender = useMemo(() => latestJobByEntry(renderJobs), [renderJobs])
   const liveRenders = renderJobs.filter((j) => RENDER_META[j.status].live).length
@@ -162,6 +121,15 @@ export function App() {
       if (typeof window.api?.getSavedConcepts === 'function') setSavedConcepts(await window.api.getSavedConcepts())
     })()
   }, [])
+
+  // Dola accounts + today's cap for the status bar and Today (cheap: one Control API call).
+  useEffect(() => {
+    let alive = true
+    const load = (): void => { window.api.renderOverview().then((o) => { if (alive) setOverview(o) }).catch(() => { /* ignore */ }) }
+    load()
+    const t = setInterval(load, 15_000)
+    return () => { alive = false; clearInterval(t) }
+  }, [renderJobs])
 
   // Render jobs are owned by the main process; mirror them here.
   useEffect(() => {
@@ -459,64 +427,50 @@ export function App() {
     return <div style={{ padding: 40, fontFamily: 'ui-sans-serif, system-ui', color: MUTE }}>Loading…</div>
   }
 
-  if (view === 'settings') {
-    return <Settings config={config} onSave={setConfig} onClose={() => setView('lab')} playbook={playbook} onPlaybook={setPlaybook} onResetMemory={clearAll} />
-  }
-
-  if (view === 'review') {
-    return <Review entries={history} jobs={renderJobs} onOpenEntry={(h) => { openEntry(h); setView('lab') }} onClose={() => setView('lab')} />
-  }
-
-  if (view === 'renders') {
-    return <Renders refsDefault={config.render?.referenceImages !== false} entries={history} jobs={renderJobs} onOpenEntry={(h) => { openEntry(h); setView('lab') }} onClose={() => setView('lab')}
+  const settingsView = (
+    <Settings config={config} onSave={setConfig} onClose={() => setView('lab')} playbook={playbook} onPlaybook={setPlaybook} onResetMemory={clearAll} />
+  )
+  const reviewView = (
+    <Review entries={history} jobs={renderJobs} onOpenEntry={(h) => { openEntry(h); setView('lab') }} onClose={() => setView('lab')} />
+  )
+  const rendersView = (
+    <Renders refsDefault={config.render?.referenceImages !== false} entries={history} jobs={renderJobs} onOpenEntry={(h) => { openEntry(h); setView('lab') }} onClose={() => setView('lab')}
       onRefresh={async () => { const r = await window.api.refreshHistory(); setHistory(r.history); return r.added }} />
-  }
-
-  if (view === 'history') {
-    return <History entries={history} openId={cur?.id ?? null} onOpen={(h) => { openEntry(h); setView('lab') }} onClose={() => setView('lab')} />
-  }
+  )
+  const historyView = (
+    <History entries={history} openId={cur?.id ?? null} onOpen={(h) => { openEntry(h); setView('lab') }} onClose={() => setView('lab')} />
+  )
 
   const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform)
   const runHint = isMac ? '⌘↵' : 'Ctrl+↵'
 
-  return (
-    <div style={{ minHeight: '100%', background: PAPER, color: INK, fontFamily: 'ui-sans-serif, system-ui, sans-serif' }}>
+  const labView = (
+    <div style={{ minHeight: '100%', background: PAPER, color: INK }}>
       <style>{`
-        @keyframes ll-spin{to{transform:rotate(360deg)}}
-        @keyframes ll-pulse{0%,100%{opacity:1}50%{opacity:.35}}
-        .ll-wrap{max-width:1440px;margin:0 auto;padding:18px}
+        .ll-wrap{max-width:1440px;margin:0 auto;padding:24px 24px 32px}
         .ll-grid{display:grid;grid-template-columns:340px minmax(0,1fr) 252px;gap:16px;align-items:start}
-        @media (max-width:1180px){.ll-grid{grid-template-columns:minmax(280px,320px) minmax(0,1fr)}.ll-recent{grid-column:1 / -1 !important;position:static !important}}
-        @media (max-width:760px){.ll-grid{grid-template-columns:1fr}.ll-controls{position:static !important}}
+        @media (max-width:1400px){.ll-grid{grid-template-columns:minmax(280px,320px) minmax(0,1fr)}.ll-recent{grid-column:1 / -1 !important;position:static !important}.ll-controls{position:static !important}}
+        @media (max-width:980px){.ll-grid{grid-template-columns:1fr}.ll-controls{position:static !important}}
       `}</style>
       <div className="ll-wrap">
 
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 14 }}>
-          <div>
-            <div style={{ fontSize: 11, letterSpacing: 2, textTransform: 'uppercase', color: ACCENT, fontWeight: 600 }}>Livery Studio · plan · render · review</div>
-            <div style={{ fontSize: 22, fontWeight: 600, marginTop: 2 }}>Scale-illusion prompt lab</div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            {learning && <span style={{ color: ACCENT, fontSize: 12.5, fontWeight: 600 }}>teaching playbook…{learnCount > 1 ? ` (${learnCount})` : ''}</span>}
+        <div style={{ marginBottom: 16 }}>
+          <PageHeader eyebrow="Create · the brain writes Seedance prompts" title="Prompt lab">
+            {learning && <span style={{ color: INFO, fontSize: 12.5, fontWeight: 600 }}>teaching playbook…{learnCount > 1 ? ` (${learnCount})` : ''}</span>}
             {(current || candidates.length > 0) && <button onClick={startNew} title="Clear the open prompt (and any leftover Direction from History) so you can generate a fresh one" style={{ ...ghostBtn, padding: '8px 14px' }}>New</button>}
-            <button onClick={() => setView('review')} style={{ ...ghostBtn, padding: '8px 14px', color: awaitingReview ? GOOD : INK, borderColor: awaitingReview ? GOOD : LINE }}>✓ Review{awaitingReview ? ` · ${awaitingReview}` : ''}</button>
-            <button onClick={() => setView('renders')} style={{ ...ghostBtn, padding: '8px 14px', color: liveRenders ? ACCENT : INK, borderColor: liveRenders ? ACCENT : LINE }}>🎬 Renders{liveRenders ? ` · ${liveRenders}` : ''}</button>
-            <button onClick={() => setView('history')} style={{ ...ghostBtn, padding: '8px 14px' }}>History</button>
-            <button onClick={() => setView('settings')} style={{ ...ghostBtn, padding: '8px 14px' }}>Settings</button>
-          </div>
+          </PageHeader>
         </div>
 
         {/* Scoreboard */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
           {REACH.slice().reverse().map((r) => (
-            <span key={r.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, border: `1px solid ${LINE}`, borderRadius: 20, padding: '5px 12px', fontSize: 12.5, background: '#fff' }}>
+            <span key={r.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, border: `1px solid ${LINE}`, borderRadius: 20, padding: '5px 12px', fontSize: 12.5, background: 'var(--surface)' }}>
               <span style={{ width: 8, height: 8, borderRadius: '50%', background: r.color }} />
               <strong style={{ color: r.color }}>{tierCount(r.id)}</strong>
               <span style={{ color: MUTE }}>{r.id === 'flop' ? 'flop' : r.id === 'normal' ? 'normal' : r.id === 'good' ? 'good' : 'viral'}</span>
             </span>
           ))}
-          {hookTries.length > 0 && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${LINE}`, borderRadius: 20, padding: '5px 12px', fontSize: 12.5, background: '#fff', color: MUTE }}>hook <strong style={{ color: INK }}>{hookStrong.length}/{hookTries.length}</strong></span>}
+          {hookTries.length > 0 && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${LINE}`, borderRadius: 20, padding: '5px 12px', fontSize: 12.5, background: 'var(--surface)', color: MUTE }}>hook <strong style={{ color: INK }}>{hookStrong.length}/{hookTries.length}</strong></span>}
           <span style={{ marginLeft: 'auto', fontSize: 12.5, color: toscoreCount > 0 ? ACCENT : MUTE, fontWeight: 600 }}>{toscoreCount} awaiting your result</span>
         </div>
 
@@ -545,12 +499,12 @@ export function App() {
             <div><div style={lbl}>Environment</div><select value={env} onChange={(e) => setEnv(e.target.value)} style={sel}>{ENV.map((e2) => <option key={e2.id} value={e2.id}>{e2.label}</option>)}</select></div>
             <div><div style={lbl}>Camera identity</div><select value={camera} onChange={(e) => setCamera(e.target.value)} style={sel}>{CAMERA.map((c2) => <option key={c2.id} value={c2.id}>{c2.label}</option>)}</select></div>
 
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, border: `1px solid ${hook ? ACCENT : LINE}`, borderRadius: 10, padding: '10px 14px', background: hook ? '#FBEADF' : '#fff' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, border: `1px solid ${hook ? ACCENT : LINE}`, borderRadius: 10, padding: '10px 14px', background: hook ? 'var(--accent-soft)' : 'var(--surface)' }}>
               <div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: hook ? ACCENT : INK }}>Hook mode {hook ? 'on' : 'off'}</div>
                 <div style={{ fontSize: 12, color: MUTE }}>One photoreal-but-impossible detail — the "what is that?" gamble.</div>
               </div>
-              <button onClick={() => setHook((h) => !h)} style={{ border: 'none', cursor: 'pointer', borderRadius: 20, width: 46, height: 26, background: hook ? ACCENT : '#CBC7BD', position: 'relative', flexShrink: 0 }} aria-label="Toggle hook mode"><span style={{ position: 'absolute', top: 3, left: hook ? 23 : 3, width: 20, height: 20, borderRadius: '50%', background: '#fff', transition: 'left .15s' }} /></button>
+              <button onClick={() => setHook((h) => !h)} style={{ border: 'none', cursor: 'pointer', borderRadius: 20, width: 46, height: 26, background: hook ? ACCENT : 'var(--toggle-off)', position: 'relative', flexShrink: 0 }} aria-label="Toggle hook mode"><span style={{ position: 'absolute', top: 3, left: hook ? 23 : 3, width: 20, height: 20, borderRadius: '50%', background: '#fff', transition: 'left .15s' }} /></button>
             </div>
 
             <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13 }}>
@@ -579,7 +533,7 @@ export function App() {
               <span><span style={{ fontWeight: 600 }}>Use current trends.</span> <span style={{ color: MUTE }}>Ride what's hot. Refresh the digest in Settings.</span></span>
             </label>
 
-            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13, border: `1px solid ${boost ? ACCENT : LINE}`, borderRadius: 10, padding: '9px 12px', background: boost ? '#FBEADF' : '#fff' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13, border: `1px solid ${boost ? ACCENT : LINE}`, borderRadius: 10, padding: '9px 12px', background: boost ? 'var(--accent-soft)' : 'var(--surface)' }}>
               <input type="checkbox" checked={boost} onChange={(e) => setBoost(e.target.checked)} style={{ width: 16, height: 16, accentColor: ACCENT, flexShrink: 0 }} />
               <span><span style={{ fontWeight: 600 }}>Reach Boost 📈</span> <span style={{ color: MUTE }}>Ceiling-attempt biases from the performance report (tarmac, widebody, centerline/rotation). A/B-tracked in Settings — untick to get the exact old behavior.</span></span>
             </label>
@@ -599,7 +553,7 @@ export function App() {
             <div><div style={lbl}>Direction for this one (optional)</div><input value={nudge} onChange={(e) => setNudge(e.target.value)} placeholder="e.g. Emirates A380, dusk, packed grandstand" style={{ ...sel, boxSizing: 'border-box' }} /></div>
 
             {brainInsights.length > 0 && (
-              <div style={{ display: 'grid', gap: 4, border: `1px solid ${LINE}`, borderRadius: 10, padding: '9px 12px', background: '#faf9f6' }}>
+              <div style={{ display: 'grid', gap: 4, border: `1px solid ${LINE}`, borderRadius: 10, padding: '9px 12px', background: 'var(--surface-2)' }}>
                 <div style={{ fontSize: 10, letterSpacing: 1.5, textTransform: 'uppercase', color: ACCENT, fontWeight: 700 }}>Brain says</div>
                 {brainInsights.map((line, i) => <div key={i} style={{ fontSize: 12.5, color: INK }}>{line}</div>)}
               </div>
@@ -607,18 +561,18 @@ export function App() {
 
             <div>
               <button onClick={generate} disabled={loading} style={{ ...primaryBtn, cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.6 : 1 }}>{loading ? 'Writing…' : 'Generate prompt'}</button>
-              <div style={{ textAlign: 'center', fontSize: 11.5, color: MUTE, marginTop: 6 }}>or press <kbd style={{ fontFamily: 'ui-monospace, monospace', background: '#fff', border: `1px solid ${LINE}`, borderRadius: 5, padding: '1px 6px' }}>{runHint}</kbd></div>
+              <div style={{ textAlign: 'center', fontSize: 11.5, color: MUTE, marginTop: 6 }}>or press <kbd style={{ fontFamily: 'var(--f-mono)', background: 'var(--surface)', border: `1px solid ${LINE}`, borderRadius: 5, padding: '1px 6px' }}>{runHint}</kbd></div>
             </div>
 
             <button onClick={() => setShowLearn((s) => !s)} style={{ ...ghostBtn, color: MUTE, fontWeight: 500, fontSize: 12.5, padding: '7px 12px' }}>{showLearn ? 'Hide how learning works' : 'How learning works'}</button>
             {showLearn && (
-              <div style={{ border: `1px solid ${LINE}`, borderRadius: 12, padding: '12px 14px', background: '#fff', fontSize: 12.5, lineHeight: 1.55 }}>
+              <div style={{ border: `1px solid ${LINE}`, borderRadius: 12, padding: '12px 14px', background: 'var(--surface)', fontSize: 12.5, lineHeight: 1.55 }}>
                 <p style={{ margin: '0 0 8px' }}>It doesn't retrain Claude. Each result you log is folded into one compact <strong>playbook</strong>, rewritten tighter — so memory stays small. Only this playbook rides along on the next prompt:</p>
-                <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace, monospace', fontSize: 11, background: SCREEN, color: SCREEN_TX, padding: '10px 12px', borderRadius: 9, margin: 0, maxHeight: 220, overflow: 'auto' }}>{playbook || 'No playbook yet. Score a few reels and the lessons distil here.'}</pre>
+                <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'var(--f-mono)', fontSize: 11, background: SCREEN, color: SCREEN_TX, padding: '10px 12px', borderRadius: 9, margin: 0, maxHeight: 220, overflow: 'auto' }}>{playbook || 'No playbook yet. Score a few reels and the lessons distil here.'}</pre>
               </div>
             )}
 
-            {error && <div style={{ color: BAD, fontSize: 13, background: '#F6E4E1', border: `1px solid ${BAD}`, borderRadius: 9, padding: '9px 12px' }}>{error}</div>}
+            {error && <div style={{ color: BAD, fontSize: 13, background: 'var(--bad-soft)', border: `1px solid ${BAD}`, borderRadius: 9, padding: '9px 12px' }}>{error}</div>}
           </div>
 
           {/* RIGHT — live result + scoring */}
@@ -652,7 +606,7 @@ export function App() {
                         <button onClick={() => chooseCandidate(c)} style={{ background: ACCENT, color: '#fff', border: 'none', borderRadius: 7, padding: '4px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Use this one</button>
                       </span>
                     </div>
-                    <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, monospace', fontSize: 12, lineHeight: 1.6, color: SCREEN_TX, whiteSpace: 'pre-wrap', maxHeight: 200, overflowY: 'auto' }}>
+                    <div style={{ fontFamily: 'var(--f-mono)', fontSize: 12, lineHeight: 1.6, color: SCREEN_TX, whiteSpace: 'pre-wrap', maxHeight: 200, overflowY: 'auto' }}>
                       {splitSections(c.text).map((s, j) => <div key={j} style={{ marginBottom: 8 }}><span style={{ color: ACCENT, fontWeight: 600 }}>{s.label}</span>{s.body}</div>)}
                     </div>
                   </div>
@@ -665,7 +619,7 @@ export function App() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                   <span style={{ fontSize: 10, letterSpacing: 2, textTransform: 'uppercase', color: '#8d887b' }}>{current.scenario}{current.hook ? ' · hook' : ''}{current.multiShot ? ' · multi-shot' : ''}</span>
                   <span style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                    <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12, color: over ? '#ff8a6b' : '#7fc59c' }}>{count} / {charLimit}</span>
+                    <span style={{ fontFamily: 'var(--f-mono)', fontSize: 12, color: over ? '#ff8a6b' : '#7fc59c' }}>{count} / {charLimit}</span>
                     <CopyBtn text={current.text} style={{ background: 'transparent', border: '1px solid #46443c', color: SCREEN_TX, borderRadius: 7, padding: '4px 10px', fontSize: 12, cursor: 'pointer' }} />
                     <button onClick={() => setCurrent(null)} style={{ background: 'transparent', border: 'none', color: '#8d887b', fontSize: 16, cursor: 'pointer', lineHeight: 1 }} aria-label="Close">×</button>
                   </span>
@@ -673,7 +627,7 @@ export function App() {
                 {current.nudge && (
                   <div style={{ fontSize: 12, color: '#8d887b', marginBottom: 10 }}><span style={{ color: ACCENT, fontWeight: 600 }}>Direction: </span>{current.nudge}</div>
                 )}
-                <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, monospace', fontSize: 12.5, lineHeight: 1.7, color: SCREEN_TX, whiteSpace: 'pre-wrap' }}>
+                <div style={{ fontFamily: 'var(--f-mono)', fontSize: 12.5, lineHeight: 1.7, color: SCREEN_TX, whiteSpace: 'pre-wrap' }}>
                   {sections!.map((s, i) => <div key={i} style={{ marginBottom: i < sections!.length - 1 ? 12 : 0 }}><span style={{ color: ACCENT, fontWeight: 600 }}>{s.label}</span>{s.body}</div>)}
                 </div>
               </div>
@@ -690,7 +644,7 @@ export function App() {
                   <CopyBtn text={current.title || ''} style={{ ...ghostBtn, padding: '7px 12px', fontSize: 12.5, flexShrink: 0 }} />
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <code style={{ flex: 1, fontFamily: 'ui-monospace, monospace', fontSize: 12.5, color: MUTE, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{current.filename || '—'}</code>
+                  <code style={{ flex: 1, fontFamily: 'var(--f-mono)', fontSize: 12.5, color: MUTE, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{current.filename || '—'}</code>
                   <CopyBtn text={current.filename || ''} style={{ ...ghostBtn, padding: '7px 12px', fontSize: 12.5, flexShrink: 0 }} />
                 </div>
                 <div style={{ borderTop: `1px solid ${LINE}`, paddingTop: 10, marginTop: 10 }}>
@@ -725,25 +679,25 @@ export function App() {
                 {/* Step 1 — how far it reached (selection only; nothing commits yet) */}
                 <div style={{ fontSize: 12, color: MUTE, marginBottom: 7, fontWeight: 600 }}>1 · How far did it reach?</div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
-                  {REACH.map((r) => { const on = reachDraft === r.id; return <button key={r.id} onClick={() => setReachDraft(r.id)} style={{ flex: '1 1 auto', minWidth: 90, borderRadius: 9, padding: '10px 12px', fontSize: 13.5, fontWeight: 600, cursor: 'pointer', border: `1px solid ${r.color}`, background: on ? r.color : '#fff', color: on ? '#fff' : r.color }}>{r.label}</button> })}
+                  {REACH.map((r) => { const on = reachDraft === r.id; return <button key={r.id} onClick={() => setReachDraft(r.id)} style={{ flex: '1 1 auto', minWidth: 90, borderRadius: 9, padding: '10px 12px', fontSize: 13.5, fontWeight: 600, cursor: 'pointer', border: `1px solid ${r.color}`, background: on ? r.color : 'var(--surface)', color: on ? '#fff' : r.color }}>{r.label}</button> })}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
                   <span style={{ fontSize: 12, color: MUTE }}>All-time views (optional):</span>
-                  <input value={viewsDraft} onChange={(e) => setViewsDraft(e.target.value)} placeholder="e.g. 1.2m or 300k" style={{ width: 150, padding: '7px 10px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 13, background: '#fff', color: INK }} />
+                  <input value={viewsDraft} onChange={(e) => setViewsDraft(e.target.value)} placeholder="e.g. 1.2m or 300k" style={{ width: 150, padding: '7px 10px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 13, background: 'var(--surface)', color: INK }} />
                   <span style={{ fontSize: 11.5, color: MUTE }}>hard data for the next analysis round</span>
                 </div>
 
                 {/* Step 2 — what to teach it */}
                 <div style={{ fontSize: 12, color: MUTE, marginBottom: 7, fontWeight: 600 }}>2 · Tell it why <span style={{ fontWeight: 400 }}>— a comment teaches it most</span></div>
-                <textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder={'What happened with this one… e.g. "blended nose got huge comments" or "crowd looked too thin"'} rows={2} style={{ width: '100%', padding: '10px 12px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 13.5, background: '#fff', color: INK, boxSizing: 'border-box', resize: 'vertical', marginBottom: 12, fontFamily: 'inherit' }} />
+                <textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder={'What happened with this one… e.g. "blended nose got huge comments" or "crowd looked too thin"'} rows={2} style={{ width: '100%', padding: '10px 12px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 13.5, background: 'var(--surface)', color: INK, boxSizing: 'border-box', resize: 'vertical', marginBottom: 12, fontFamily: 'inherit' }} />
                 <div style={{ fontSize: 12, color: MUTE, marginBottom: 7 }}>Illusion check (optional — what broke the realism):</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginBottom: 14 }}>
-                  {ILLUSION_TAGS.map((t) => <button key={t} onClick={() => setPickedTags((p) => p.includes(t) ? p.filter((x) => x !== t) : [...p, t])} style={{ borderRadius: 20, padding: '6px 13px', fontSize: 12.5, cursor: 'pointer', border: `1px solid ${pickedTags.includes(t) ? BAD : LINE}`, background: pickedTags.includes(t) ? '#F6E4E1' : '#fff', color: pickedTags.includes(t) ? BAD : INK }}>{t}</button>)}
+                  {ILLUSION_TAGS.map((t) => <button key={t} onClick={() => setPickedTags((p) => p.includes(t) ? p.filter((x) => x !== t) : [...p, t])} style={{ borderRadius: 20, padding: '6px 13px', fontSize: 12.5, cursor: 'pointer', border: `1px solid ${pickedTags.includes(t) ? BAD : LINE}`, background: pickedTags.includes(t) ? 'var(--bad-soft)' : 'var(--surface)', color: pickedTags.includes(t) ? BAD : INK }}>{t}</button>)}
                 </div>
 
                 {/* Coverage opt-out — available for any scored clip so it can be ignored */}
                 {reachDraft && (
-                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: 9, cursor: 'pointer', fontSize: 12.5, marginBottom: 14, padding: '9px 11px', border: `1px solid ${LINE}`, borderRadius: 9, background: '#fff' }}>
+                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: 9, cursor: 'pointer', fontSize: 12.5, marginBottom: 14, padding: '9px 11px', border: `1px solid ${LINE}`, borderRadius: 9, background: 'var(--surface)' }}>
                     <input type="checkbox" checked={!excludeCoverage} onChange={(e) => setExcludeCoverage(!e.target.checked)} style={{ width: 15, height: 15, accentColor: ACCENT, flexShrink: 0, marginTop: 2 }} />
                     <span><span style={{ fontWeight: 600 }}>Add this clip to coverage.</span> <span style={{ color: MUTE }}>Remembers the aircraft + setting so future “{current.scenario}” prompts can vary. Untick to skip recording this one.</span></span>
                   </label>
@@ -786,12 +740,12 @@ export function App() {
               {history.length === 0 ? (
                 <div style={{ fontSize: 12.5, color: MUTE, padding: '4px 2px', lineHeight: 1.5 }}>Your generations show up here — click any to view it again.</div>
               ) : (
-                <div style={{ display: 'grid', gap: 6 }}>
+                <div style={{ display: 'grid', gap: 6, gridTemplateColumns: 'minmax(0, 1fr)' }}>
                   {history.slice(0, 10).map((h) => {
                     const m = statusMeta(h)
                     const open = !loading && cur && cur.id === h.id
                     return (
-                      <button key={h.id} onClick={() => openEntry(h)} style={{ textAlign: 'left', cursor: 'pointer', border: `1px solid ${open ? ACCENT : LINE}`, background: open ? '#FBEADF' : '#fff', borderRadius: 9, padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <button key={h.id} onClick={() => openEntry(h)} style={{ textAlign: 'left', cursor: 'pointer', border: `1px solid ${open ? ACCENT : LINE}`, background: open ? 'var(--accent-soft)' : 'var(--surface)', borderRadius: 9, padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span style={{ width: 8, height: 8, borderRadius: '50%', background: m.color, flexShrink: 0 }} title={m.label} />
                         <span style={{ flex: 1, minWidth: 0 }}>
                           <span style={{ fontSize: 12, fontWeight: 600, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.title || snippet(h.text)}</span>
@@ -806,11 +760,24 @@ export function App() {
           </div>
         </div>
 
-        {/* Activity log — full width */}
-        <div style={{ marginTop: 16 }}>
-          <LogPanel logs={logs} onClear={() => setLogs([])} />
-        </div>
       </div>
     </div>
+  )
+
+  const toScore = history.filter((h) => h.status === 'posted').length
+  const busy = loading ? 'Writing prompt…' : conceptLoading ? 'Inventing a concept…' : captioning ? 'Writing caption…' : learning ? 'Teaching playbook…' : ''
+  const page = view === 'today'
+    ? <Today entries={history} jobs={renderJobs} overview={overview} onNav={setView} onOpenEntry={(h) => { openEntry(h); setView('lab') }} />
+    : view === 'lab' ? labView
+      : view === 'renders' ? rendersView
+        : view === 'review' ? reviewView
+          : view === 'history' ? historyView
+            : settingsView
+
+  return (
+    <Shell view={view} onNav={setView} overview={overview} logs={logs} onClearLogs={() => setLogs([])} busy={busy} theme={theme} onTheme={setTheme}
+      counts={{ renders: { n: liveRenders, tone: 'info' }, review: { n: awaitingReview, tone: 'attention' }, history: { n: toScore, tone: 'info' } }}>
+      {page}
+    </Shell>
   )
 }

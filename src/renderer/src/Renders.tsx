@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
-import { INK, PAPER, LINE, MUTE, ACCENT, GOOD, BAD, WAIT, SCREEN, ghostBtn } from './ui'
+import { INK, PAPER, LINE, MUTE, ACCENT, INFO, GOOD, BAD, WAIT, SCREEN, ghostBtn, eyebrow, pageTitle } from './ui'
 import { snippet } from '@shared/util'
 import type { Entry, RenderJob, RenderOverview, RenderStatus } from '@shared/types'
 
 export const RENDER_META: Record<RenderStatus, { label: string; color: string; live: boolean }> = {
   queued: { label: 'Queued', color: WAIT, live: true },
-  starting: { label: 'Starting instance', color: ACCENT, live: true },
-  sending: { label: 'Sending to Dola', color: ACCENT, live: true },
-  generating: { label: 'Generating', color: ACCENT, live: true },
-  downloading: { label: 'Downloading', color: ACCENT, live: true },
+  starting: { label: 'Starting instance', color: INFO, live: true },
+  sending: { label: 'Sending to Dola', color: INFO, live: true },
+  generating: { label: 'Generating', color: INFO, live: true },
+  downloading: { label: 'Downloading', color: INFO, live: true },
   done: { label: 'Rendered', color: GOOD, live: false },
   failed: { label: 'Failed', color: BAD, live: false },
   cancelled: { label: 'Cancelled', color: MUTE, live: false },
@@ -62,7 +62,7 @@ function JobCard({ job, onOpenEntry, entry }: { job: RenderJob; entry?: Entry; o
   const meta = RENDER_META[job.status]
   const [preview, setPreview] = useState(false)
   return (
-    <div style={{ border: `1px solid ${LINE}`, borderRadius: 12, background: '#fff', padding: '12px 14px', display: 'grid', gap: 8 }}>
+    <div style={{ border: `1px solid ${LINE}`, borderRadius: 12, background: 'var(--surface)', padding: '12px 14px', display: 'grid', gap: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span style={{ width: 9, height: 9, borderRadius: '50%', background: meta.color, flexShrink: 0, animation: meta.live && job.status !== 'queued' ? 'll-pulse 1.4s ease-in-out infinite' : undefined }} />
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -70,7 +70,7 @@ function JobCard({ job, onOpenEntry, entry }: { job: RenderJob; entry?: Entry; o
           <div style={{ fontSize: 11.5, color: MUTE }}>
             <span style={{ color: meta.color, fontWeight: 600 }}>{meta.label}</span>
             {job.review && <span style={{ color: job.review.verdict === 'approved' ? GOOD : job.review.verdict === 'rejected' ? BAD : MUTE, fontWeight: 600 }}> · {job.review.verdict}</span>}
-            {job.status === 'done' && !job.review && <span style={{ color: ACCENT }}> · awaiting review</span>}
+            {job.status === 'done' && !job.review && <span style={{ color: INFO }}> · awaiting review</span>}
             {job.instanceName ? ` · ${job.instanceName}` : ''}
             {job.status === 'done' ? ` · ${since(job.endedAt)}${job.bytes ? ` · ${(job.bytes / 1e6).toFixed(1)} MB` : ''}${job.width ? ` · ${job.width}×${job.height}` : ''}` : ` · queued ${since(job.createdAt)}`}
           </div>
@@ -88,7 +88,7 @@ function JobCard({ job, onOpenEntry, entry }: { job: RenderJob; entry?: Entry; o
         </span>
       </div>
       {job.note && <div style={{ fontSize: 12, color: MUTE }}>{job.note}</div>}
-      {job.error && <div style={{ fontSize: 12, color: BAD, background: '#F6E4E1', borderRadius: 8, padding: '6px 10px', wordBreak: 'break-word' }}>{job.error}</div>}
+      {job.error && <div style={{ fontSize: 12, color: BAD, background: 'var(--bad-soft)', borderRadius: 8, padding: '6px 10px', wordBreak: 'break-word' }}>{job.error}</div>}
       {preview && job.file && (
         <video src={`studio-media://${job.id}/video.mp4`} controls autoPlay style={{ width: '100%', maxHeight: 560, borderRadius: 10, background: SCREEN }} />
       )}
@@ -210,31 +210,31 @@ export function Renders({ entries, jobs, onOpenEntry, onClose, onRefresh, refsDe
   const sent = ov?.sentToday ?? 0
 
   return (
-    <div style={{ minHeight: '100%', background: PAPER, color: INK, fontFamily: 'ui-sans-serif, system-ui, sans-serif' }}>
+    <div style={{ minHeight: '100%', background: PAPER, color: INK, fontFamily: 'var(--f-body)' }}>
       <style>{'@keyframes ll-pulse{0%,100%{opacity:1}50%{opacity:.35}}'}</style>
-      <div style={{ maxWidth: 1100, margin: '0 auto', padding: 18, display: 'grid', gap: 16 }}>
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 24px 32px', display: 'grid', gap: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
           <div>
-            <div style={{ fontSize: 11, letterSpacing: 2, textTransform: 'uppercase', color: ACCENT, fontWeight: 600 }}>Render · Dola / Seedance</div>
-            <div style={{ fontSize: 22, fontWeight: 600 }}>Video renders</div>
+            <div style={eyebrow}>Render · Dola / Seedance</div>
+            <h1 style={{ ...pageTitle, marginTop: 2 }}>Video renders</h1>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={() => window.api.renderOpenOutput()} style={ghostBtn}>Open video folder</button>
-            <button onClick={onClose} style={ghostBtn}>Back to lab</button>
+            
           </div>
         </div>
 
         {/* Today + instances */}
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 260px) 1fr', gap: 14 }}>
-          <div style={{ border: `1px solid ${LINE}`, borderRadius: 12, background: '#fff', padding: '14px 16px' }}>
+          <div style={{ border: `1px solid ${LINE}`, borderRadius: 12, background: 'var(--surface)', padding: '14px 16px' }}>
             <div style={{ fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', color: MUTE, fontWeight: 600 }}>Sent today</div>
             <div style={{ fontSize: 28, fontWeight: 700, color: sent >= cap && cap > 0 ? BAD : INK }}>{sent}<span style={{ fontSize: 16, color: MUTE, fontWeight: 500 }}> / {cap}</span></div>
-            <div style={{ height: 6, background: '#EEEAE1', borderRadius: 4, overflow: 'hidden', marginTop: 6 }}>
+            <div style={{ height: 6, background: 'var(--track)', borderRadius: 4, overflow: 'hidden', marginTop: 6 }}>
               <div style={{ width: `${cap ? Math.min(100, (sent / cap) * 100) : 0}%`, height: '100%', background: sent >= cap ? BAD : ACCENT }} />
             </div>
             <div style={{ fontSize: 11.5, color: MUTE, marginTop: 6 }}>{liveCount} in progress · daily cap in Settings → Render</div>
           </div>
-          <div style={{ border: `1px solid ${LINE}`, borderRadius: 12, background: '#fff', padding: '14px 16px' }}>
+          <div style={{ border: `1px solid ${LINE}`, borderRadius: 12, background: 'var(--surface)', padding: '14px 16px' }}>
             <div style={{ fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', color: MUTE, fontWeight: 600, marginBottom: 8 }}>Dola instances</div>
             {!ov ? <div style={{ fontSize: 12.5, color: MUTE }}>Checking…</div>
               : ov.instances === null ? <div style={{ fontSize: 12.5, color: BAD }}>{ov.error}</div>
@@ -243,7 +243,7 @@ export function Renders({ entries, jobs, onOpenEntry, onClose, onRefresh, refsDe
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                       {ov.instances.map((i) => {
                         const state = i.excluded ? 'reserved' : i.busy ? 'rendering' : i.cooldownUntil ? 'cooling down' : i.isInitialized ? 'ready' : 'stopped'
-                        const color = i.excluded ? MUTE : i.busy ? ACCENT : i.cooldownUntil ? '#B7862A' : i.isInitialized ? GOOD : WAIT
+                        const color = i.excluded ? MUTE : i.busy ? ACCENT : i.cooldownUntil ? 'var(--warn)' : i.isInitialized ? GOOD : WAIT
                         return (
                           <span key={i.id} title={`#${i.id} · ${i.status}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${LINE}`, borderRadius: 20, padding: '4px 10px', fontSize: 12, opacity: i.excluded ? 0.6 : 1 }}>
                             <span style={{ width: 7, height: 7, borderRadius: '50%', background: color }} />
@@ -257,13 +257,13 @@ export function Renders({ entries, jobs, onOpenEntry, onClose, onRefresh, refsDe
         </div>
 
         {/* Ready to render */}
-        <div style={{ border: `1px solid ${LINE}`, borderRadius: 12, background: '#fff', padding: '14px 16px' }}>
+        <div style={{ border: `1px solid ${LINE}`, borderRadius: 12, background: 'var(--surface)', padding: '14px 16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: unrendered.length ? 10 : 0, flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <div style={{ fontSize: 13, fontWeight: 700 }}>Prompts ready to render <span style={{ color: MUTE, fontWeight: 500 }}>· {unrendered.length}</span></div>
               <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
                 {RANGES.map((r) => (
-                  <button key={r.id} onClick={() => setRange(r.id)} style={{ borderRadius: 20, padding: '3px 10px', fontSize: 12, cursor: 'pointer', border: `1px solid ${range === r.id ? INK : LINE}`, background: range === r.id ? INK : '#fff', color: range === r.id ? '#fff' : MUTE, fontWeight: range === r.id ? 600 : 500 }}>{r.label}</button>
+                  <button key={r.id} onClick={() => setRange(r.id)} style={{ borderRadius: 20, padding: '3px 10px', fontSize: 12, cursor: 'pointer', border: `1px solid ${range === r.id ? INK : LINE}`, background: range === r.id ? INK : 'var(--surface)', color: range === r.id ? 'var(--on-ink)' : MUTE, fontWeight: range === r.id ? 600 : 500 }}>{r.label}</button>
                 ))}
               </span>
             </div>
@@ -275,7 +275,7 @@ export function Renders({ entries, jobs, onOpenEntry, onClose, onRefresh, refsDe
               <span style={{ display: 'flex', gap: 6 }}>
                 <button onClick={() => setPicked(picked.length === unrendered.length ? [] : unrendered.map((e) => e.id))} style={small}>{picked.length === unrendered.length ? 'Select none' : 'Select all'}</button>
                 <RefsToggle on={refs} onChange={setRefs} />
-                <button onClick={renderPicked} disabled={!picked.length} style={{ ...small, background: picked.length ? ACCENT : '#fff', color: picked.length ? '#fff' : MUTE, borderColor: picked.length ? ACCENT : LINE }}>🎬 Render {picked.length || ''}</button>
+                <button onClick={renderPicked} disabled={!picked.length} style={{ ...small, background: picked.length ? ACCENT : 'var(--surface)', color: picked.length ? '#fff' : MUTE, borderColor: picked.length ? ACCENT : LINE }}>🎬 Render {picked.length || ''}</button>
               </span>
             )}
           </div>
@@ -284,7 +284,7 @@ export function Renders({ entries, jobs, onOpenEntry, onClose, onRefresh, refsDe
             : (
               <div style={{ display: 'grid', gap: 4, maxHeight: 260, overflowY: 'auto' }}>
                 {unrendered.map((e) => (
-                  <label key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px', borderRadius: 8, cursor: 'pointer', background: picked.includes(e.id) ? '#FBEADF' : 'transparent' }}>
+                  <label key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px', borderRadius: 8, cursor: 'pointer', background: picked.includes(e.id) ? 'var(--accent-soft)' : 'transparent' }}>
                     <input type="checkbox" checked={picked.includes(e.id)} onChange={() => setPicked((p) => p.includes(e.id) ? p.filter((x) => x !== e.id) : [...p, e.id])} style={{ accentColor: ACCENT, width: 15, height: 15 }} />
                     <span style={{ flex: 1, minWidth: 0, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><strong style={{ fontWeight: 600 }}>{e.title || snippet(e.text)}</strong> <span style={{ color: MUTE }}>· {e.scenario}</span></span>
                     {latest.get(e.id) && <span style={{ fontSize: 11.5, color: BAD }}>last render {RENDER_META[latest.get(e.id)!.status].label.toLowerCase()}</span>}
@@ -298,7 +298,7 @@ export function Renders({ entries, jobs, onOpenEntry, onClose, onRefresh, refsDe
         <div style={{ display: 'grid', gap: 10 }}>
           <div style={{ display: 'flex', gap: 6 }}>
             {(['active', 'done', 'all'] as const).map((f) => (
-              <button key={f} onClick={() => setFilter(f)} style={{ ...small, background: filter === f ? INK : '#fff', color: filter === f ? '#fff' : INK, borderColor: filter === f ? INK : LINE }}>
+              <button key={f} onClick={() => setFilter(f)} style={{ ...small, background: filter === f ? INK : 'var(--surface)', color: filter === f ? 'var(--on-ink)' : INK, borderColor: filter === f ? INK : LINE }}>
                 {f === 'active' ? 'In progress & failed' : f === 'done' ? 'Rendered' : 'All'}
               </button>
             ))}

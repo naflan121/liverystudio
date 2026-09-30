@@ -1,6 +1,11 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
+import './theme.css'
 import { App } from './App'
+import { applyTheme, loadTheme } from './Shell'
+
+// Before the first paint, so the saved theme never flashes the other one.
+applyTheme(loadTheme())
 
 /**
  * Catches any render/runtime error in the tree and shows it on screen,
