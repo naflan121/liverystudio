@@ -10,7 +10,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { getConfig, getRenderJobs, setRenderJobs } from './store'
 import { getEntry } from './db'
-import { listInstances, startInstance, getPage, forget, fillVideoPrompt, sendAndHandleBusy, waitForVideo, Cancelled } from './dola/driver'
+import { listInstances, startInstance, showInstance, waitUntilDrawn, getPage, forget, fillVideoPrompt, sendAndHandleBusy, waitForVideo, Cancelled } from './dola/driver'
 import { resolveFallbackApi, downloadFile } from './dola/resolver'
 import type { RenderJob, RenderOverview, DolaInstanceInfo, LogLevel } from '../shared/types'
 
@@ -39,6 +39,15 @@ function save(): void {
 function patch(job: RenderJob, p: Partial<RenderJob>): void {
   Object.assign(job, p)
   save()
+}
+
+// DolaMultiBrowser shows one instance at a time, so the show → type → send phase is
+// serialised across jobs. Generation and downloading still run in parallel off-screen.
+let screenChain: Promise<unknown> = Promise.resolve()
+function withScreen<T>(fn: () => Promise<T>): Promise<T> {
+  const run = screenChain.then(fn, fn)
+  screenChain = run.then(() => undefined, () => undefined)
+  return run
 }
 
 const localDay = (d: Date): string => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
@@ -213,15 +222,24 @@ async function runJob(job: RenderJob, inst: { id: number; name: string; isInitia
 
     if (!resuming) {
       patch(job, { status: 'sending' })
-      emitLog('step', `Sending "${job.title}" to Dola on ${inst.name}…`)
       // Captured at send time (not queue time), so edits in Settings apply to anything still waiting.
       let references = ''
       if (job.useReferences ?? cfg.referenceImages) {
         try { references = await resolveReferences(job) } catch (e: any) { emitLog('warn', `Reference images skipped for "${job.title}": ${e?.message || e}`) }
       }
       patch(job, { instructions: cfg.extraInstructions?.trim() || undefined, references: references || undefined })
-      await fillVideoPrompt(page, { prompt: job.prompt, model: cfg.model, duration: cfg.duration, aspect: cfg.aspect, instructions: job.instructions, references: job.references })
-      const sent = await sendAndHandleBusy(page, cancelled)
+      // Only the instance DolaMultiBrowser has on screen is drawn, so typing is one job at a time:
+      // show this instance, type, send (and ride out "high demand"), then hand the screen on.
+      patch(job, { note: 'Waiting for its turn on screen' })
+      const sent = await withScreen(async () => {
+        if (cancelled()) throw new Cancelled()
+        patch(job, { note: undefined })
+        emitLog('step', `Sending "${job.title}" to Dola on ${inst.name}…`)
+        await showInstance(inst.id)
+        if (!(await waitUntilDrawn(page))) throw new Error(`${inst.name} is not being drawn on screen in DolaMultiBrowser, so its chat box can't be typed into. Is DolaMultiBrowser minimised?`)
+        await fillVideoPrompt(page, { prompt: job.prompt, model: cfg.model, duration: cfg.duration, aspect: cfg.aspect, instructions: job.instructions, references: job.references })
+        return sendAndHandleBusy(page, cancelled)
+      })
       patch(job, { chatUrl: sent.url })
       if (sent.status === 'still_busy') {
         cooldown.set(inst.id, Date.now() + BUSY_COOLDOWN_MS)

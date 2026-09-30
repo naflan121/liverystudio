@@ -74,6 +74,35 @@ export async function startInstance(id: number): Promise<ControlInstance> {
   return api<ControlInstance>('POST', `/instances/${id}/start`)
 }
 
+/**
+ * Bring an instance on screen in DolaMultiBrowser. The app shows ONE instance at a time;
+ * every other running instance's page is detached from the window and stops being drawn,
+ * so its chat box can't be clicked or typed into. Call before typing; afterwards the job
+ * can wait and download off-screen.
+ */
+export async function showInstance(id: number): Promise<void> {
+  try {
+    await api<ControlInstance>('POST', `/instances/${id}/show`)
+  } catch (e: any) {
+    if (/-> 404/.test(e?.message || '')) throw new Error('This DolaMultiBrowser build has no "show instance" command. Rebuild/restart DolaMultiBrowser (see CONTROL_API.md), or keep the rendering instance on screen.')
+    throw e
+  }
+}
+
+/** True once the page is actually being drawn (animation frames run only for a visible page). */
+export async function waitUntilDrawn(page: Page, timeoutMs = 10_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const drawn = await page.evaluate(() => new Promise<boolean>((res) => {
+      let done = false
+      requestAnimationFrame(() => { done = true; res(true) })
+      setTimeout(() => { if (!done) res(false) }, 1000)
+    })).catch(() => false)
+    if (drawn) return true
+  }
+  return false
+}
+
 // ---------- CDP connections (one per instance, reused) ----------
 
 const connections = new Map<number, { wsUrl: string; browser: Browser }>()
