@@ -129,6 +129,8 @@ export interface AppConfig {
   titleEnabled: boolean
   titleMaxLen: number
   extraNegatives: string
+  /** Livery Studio: phrases you reuse in "Direction for this one" — one click adds them. */
+  directionSnippets?: string[]
   defaults: {
     scenario: string
     aircraft: string

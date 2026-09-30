@@ -38,6 +38,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 const SETTINGS_SECTIONS: { id: string; label: string }[] = [
   { id: 's-ai', label: 'AI & models' },
   { id: 's-prompts', label: 'Prompts & titles' },
+  { id: 's-snippets', label: 'Direction snippets' },
   { id: 's-minimax', label: 'MiniMax' },
   { id: 's-engines', label: 'Engine per task' },
   { id: 's-precheck', label: 'AI pre-check' },
@@ -208,6 +209,14 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
     ...(mm?.models || []).map((m) => ({ value: `minimax:${m.id}`, label: `MiniMax — ${m.id.replace(/^MiniMax-/, '')}${c.ai.minimax.enabled ? '' : ' (MiniMax is off)'}` })),
   ]
   const isBrain = mode === 'brain'
+  const [snipDraft, setSnipDraft] = useState('')
+  function addSnippet() {
+    const v = snipDraft.trim().replace(/,+$/, '')
+    if (!v) return
+    const cur = c.directionSnippets || []
+    if (!cur.some((x) => x.toLowerCase() === v.toLowerCase())) set({ directionSnippets: [...cur, v] })
+    setSnipDraft('')
+  }
   const [lessons, setLessons] = useState('')
   const [lessonsMsg, setLessonsMsg] = useState('')
   useEffect(() => { window.api.getRenderLessons().then(setLessons).catch(() => { /* ignore */ }) }, [])
@@ -442,6 +451,31 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
               <span style={{ fontWeight: 600 }}>Generate an SEO title with each prompt</span>
             </label>
             <Field label="Title max length">{num(c.titleMaxLen, (n) => set({ titleMaxLen: n }))}</Field>
+          </Card>
+          )}
+
+          {!isBrain && (
+          <Card title="Direction snippets" id="s-snippets">
+            <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>Phrases you keep typing into <strong>Direction for this one</strong>. They show as chips under that box in Create — click to add (comma-separated), click again to take out.</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input value={snipDraft} onChange={(e) => setSnipDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addSnippet() } }} placeholder="e.g. golden hour, packed grandstand" style={{ ...sel, boxSizing: 'border-box', flex: 1 }} />
+              <button onClick={addSnippet} disabled={!snipDraft.trim()} style={{ ...ghostBtn, opacity: snipDraft.trim() ? 1 : 0.6 }}>Add</button>
+            </div>
+            {(c.directionSnippets || []).length === 0
+              ? <div style={{ fontSize: 12.5, color: MUTE }}>No snippets yet.</div>
+              : (
+                <div style={{ display: 'grid', gap: 5 }}>
+                  {(c.directionSnippets || []).map((s, i, arr) => (
+                    <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <input value={s} onChange={(e) => set({ directionSnippets: arr.map((x, j) => (j === i ? e.target.value : x)) })} style={{ ...sel, boxSizing: 'border-box', flex: 1, padding: '6px 9px', fontSize: 13 }} />
+                      <button onClick={() => i > 0 && set({ directionSnippets: arr.map((x, j) => (j === i - 1 ? arr[i] : j === i ? arr[i - 1] : x)) })} disabled={i === 0} title="Move up" style={{ ...ghostBtn, padding: '4px 9px', opacity: i === 0 ? 0.4 : 1 }}>↑</button>
+                      <button onClick={() => i < arr.length - 1 && set({ directionSnippets: arr.map((x, j) => (j === i + 1 ? arr[i] : j === i ? arr[i + 1] : x)) })} disabled={i === arr.length - 1} title="Move down" style={{ ...ghostBtn, padding: '4px 9px', opacity: i === arr.length - 1 ? 0.4 : 1 }}>↓</button>
+                      <button onClick={() => set({ directionSnippets: arr.filter((_, j) => j !== i) })} title="Remove" style={{ ...ghostBtn, padding: '4px 9px', color: BAD }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            <div style={{ fontSize: 12, color: MUTE }}>Remember to press <strong>Save settings</strong>.</div>
           </Card>
           )}
 

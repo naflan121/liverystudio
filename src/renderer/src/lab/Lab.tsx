@@ -7,6 +7,7 @@ import type { AppConfig, Entry, RenderJob } from '@shared/types'
 import { RenderStrip } from '../Renders'
 import { PageHeader } from '../Shell'
 import { CopyBtn, statusMeta, ago } from './common'
+import { hasSnippet, toggleSnippet } from '@shared/snippets'
 import type { LabState } from './useLab'
 
 export function Lab({ lab, config, history, playbook, latestRender }: {
@@ -126,7 +127,23 @@ export function Lab({ lab, config, history, playbook, latestRender }: {
 
             <div><div style={lbl}>Exploration · {explore < 34 ? 'proven' : explore > 66 ? 'experimental' : 'balanced'}</div><input type="range" min={0} max={100} value={explore} onChange={(e) => setExplore(+e.target.value)} style={{ width: '100%', accentColor: ACCENT }} /></div>
 
-            <div><div style={lbl}>Direction for this one (optional)</div><input value={nudge} onChange={(e) => setNudge(e.target.value)} placeholder="e.g. Emirates A380, dusk, packed grandstand" style={{ ...sel, boxSizing: 'border-box' }} /></div>
+            <div>
+              <div style={lbl}>Direction for this one (optional)</div>
+              <input value={nudge} onChange={(e) => setNudge(e.target.value)} placeholder="e.g. Emirates A380, dusk, packed grandstand" style={{ ...sel, boxSizing: 'border-box' }} />
+              {(config.directionSnippets || []).length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 7 }}>
+                  {(config.directionSnippets || []).map((s) => {
+                    const on = hasSnippet(nudge, s)
+                    return (
+                      <button key={s} onClick={() => setNudge(toggleSnippet(nudge, s))} title={on ? 'Click to take it out' : 'Click to add to the direction'}
+                        style={{ borderRadius: 20, padding: '3px 10px', fontSize: 12, cursor: 'pointer', border: `1px solid ${on ? ACCENT : LINE}`, background: on ? 'var(--accent-soft)' : 'var(--surface)', color: on ? ACCENT : INK, fontWeight: on ? 600 : 500 }}>
+                        {on ? '✓ ' : '+ '}{s}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
 
             {brainInsights.length > 0 && (
               <div style={{ display: 'grid', gap: 4, border: `1px solid ${LINE}`, borderRadius: 10, padding: '9px 12px', background: 'var(--surface-2)' }}>

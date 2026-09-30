@@ -71,6 +71,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   titleEnabled: true,
   titleMaxLen: 70,
   extraNegatives: '',
+  directionSnippets: [],
   defaults: {
     scenario: 'random',
     aircraft: 'placeholder',
