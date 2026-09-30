@@ -9,14 +9,18 @@ import { PageHeader } from '../Shell'
 import { CopyBtn, statusMeta, ago } from './common'
 import { hasSnippet, toggleSnippet } from '@shared/snippets'
 import type { LabState } from './useLab'
+import { LineupPanel } from './Lineup'
 
-export function Lab({ lab, config, history, playbook, latestRender }: {
+export function Lab({ lab, config, history, playbook, latestRender, capLeft, dailyCap }: {
+  capLeft: number | null
+  dailyCap: number
   lab: LabState
   config: AppConfig
   history: Entry[]
   playbook: string
   latestRender: Map<number, RenderJob>
 }) {
+  const { lineupOpen, setLineupOpen, lineup } = lab
   const { scenario, setScenario, aircraft, setAircraft, crowd, setCrowd, env, setEnv, camera, setCamera, hook, setHook, multiShot, setMultiShot, punchyOpen, setPunchyOpen, region, setRegion, varyCoverage, setVaryCoverage, useTrends, setUseTrends, boost, setBoost, longPrompt, setLongPrompt, candidateMode, setCandidateMode, candidates, setCandidates, nudge, setNudge, explore, setExplore, savedConcepts, setSavedConcepts, conceptLoading, setConceptLoading, loading, setLoading, learnCount, setLearnCount, error, setError, current, setCurrent, pickedTags, setPickedTags, comment, setComment, reachDraft, setReachDraft, viewsDraft, setViewsDraft, excludeCoverage, setExcludeCoverage, toast, setToast, captioning, setCaptioning, showLearn, setShowLearn, learning, toastTimer, flashToast, brainInsights, rated, tierCount, hookTries, hookStrong, toscoreCount, generateRef, count, charLimit, over, sections, cur, doLearn, buildEntry, buildReq, resetScoringDraft, startNew, conceptScenario, resolveScenario, autoRender, generateFrom, generate, surpriseConcept, saveThisConcept, remixWinner, chooseCandidate, openEntry, updateEntry, submitScore, patchCurrent, titleAvoidList, regenerateTitle, writeCaption } = lab
   const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform)
   const runHint = isMac ? '⌘↵' : 'Ctrl+↵'
@@ -34,6 +38,7 @@ export function Lab({ lab, config, history, playbook, latestRender }: {
         <div style={{ marginBottom: 16 }}>
           <PageHeader eyebrow="Create · the brain writes Seedance prompts" title="Prompt lab">
             {learning && <span style={{ color: INFO, fontSize: 12.5, fontWeight: 600 }}>teaching playbook…{learnCount > 1 ? ` (${learnCount})` : ''}</span>}
+            <button onClick={() => setLineupOpen(true)} title="Write several prompts in one go and queue them for rendering" style={{ ...ghostBtn, padding: '8px 14px', color: ACCENT, borderColor: ACCENT }}>{lineup?.running ? `Batch lineup · ${lineup.items.filter((i) => i.status === 'written' || i.status === 'queued').length}/${lineup.total}` : 'Batch lineup'}</button>
             {(current || candidates.length > 0) && <button onClick={startNew} title="Clear the open prompt (and any leftover Direction from History) so you can generate a fresh one" style={{ ...ghostBtn, padding: '8px 14px' }}>New</button>}
           </PageHeader>
         </div>
@@ -170,6 +175,7 @@ export function Lab({ lab, config, history, playbook, latestRender }: {
 
           {/* RIGHT — live result + scoring */}
           <div style={{ display: 'grid', gap: 14 }}>
+            {(lineupOpen || lineup?.running) && <LineupPanel lab={lab} config={config} history={history} capLeft={capLeft} dailyCap={dailyCap} />}
             {loading ? (
               <div style={{ border: `1px solid ${LINE}`, borderRadius: 14, padding: '54px 28px', textAlign: 'center', background: PAPER, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
                 <div style={{ width: 36, height: 36, borderRadius: '50%', border: `3px solid ${LINE}`, borderTopColor: ACCENT, animation: 'll-spin 0.8s linear infinite' }} />

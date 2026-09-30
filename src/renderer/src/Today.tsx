@@ -56,7 +56,8 @@ function Row({ title, meta, right, onClick }: { title: string; meta: React.React
 
 const Empty = ({ children }: { children: React.ReactNode }) => <div style={{ fontSize: 12.5, color: MUTE, padding: '6px 2px', lineHeight: 1.5 }}>{children}</div>
 
-export function Today({ entries, jobs, overview, onNav, onOpenEntry }: {
+export function Today({ entries, jobs, overview, onNav, onOpenEntry, onLineup }: {
+  onLineup: () => void
   entries: Entry[]
   jobs: RenderJob[]
   overview: RenderOverview | null
@@ -86,7 +87,8 @@ export function Today({ entries, jobs, overview, onNav, onOpenEntry }: {
   return (
     <div style={{ maxWidth: 1280, margin: '0 auto', padding: '24px 24px 32px', display: 'grid', gap: 18 }}>
       <PageHeader eyebrow={dateLine} title="Today">
-        <button onClick={() => onNav('lab')} style={{ ...ghostBtn, background: ACCENT, color: '#fff', border: 'none' }}>New prompt</button>
+        <button onClick={onLineup} style={{ ...ghostBtn, background: ACCENT, color: '#fff', border: 'none' }}>Batch lineup</button>
+        <button onClick={() => onNav('lab')} style={ghostBtn}>New prompt</button>
         <button onClick={() => onNav('renders')} style={ghostBtn}>Render ready prompts</button>
       </PageHeader>
 

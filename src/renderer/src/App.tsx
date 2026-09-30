@@ -109,10 +109,12 @@ export function App() {
   )
 
   const toScore = history.filter((h) => h.status === 'posted').length
-  const busy = loading ? 'Writing prompt…' : conceptLoading ? 'Inventing a concept…' : captioning ? 'Writing caption…' : learning ? 'Teaching playbook…' : ''
-  const labView = <Lab lab={lab} config={config} history={history} playbook={playbook} latestRender={latestRender} />
+  const lu = lab.lineup
+  const busy = lu?.running ? `Batch lineup: ${lu.items.filter((i) => i.status === 'written' || i.status === 'queued').length}/${lu.total} written…` : loading ? 'Writing prompt…' : conceptLoading ? 'Inventing a concept…' : captioning ? 'Writing caption…' : learning ? 'Teaching playbook…' : ''
+  const capLeft = overview ? Math.max(0, overview.dailyCap - overview.sentToday) : null
+  const labView = <Lab lab={lab} config={config} history={history} playbook={playbook} latestRender={latestRender} capLeft={capLeft} dailyCap={overview?.dailyCap ?? config.render.dailyCap} />
   const page = view === 'today'
-    ? <Today entries={history} jobs={renderJobs} overview={overview} onNav={setView} onOpenEntry={(h) => { openEntry(h); setView('lab') }} />
+    ? <Today entries={history} jobs={renderJobs} overview={overview} onNav={setView} onOpenEntry={(h) => { openEntry(h); setView('lab') }} onLineup={() => { lab.setLineupOpen(true); setView('lab') }} />
     : view === 'lab' ? labView
       : view === 'renders' ? rendersView
         : view === 'review' ? reviewView

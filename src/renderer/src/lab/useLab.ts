@@ -331,7 +331,78 @@ export function useLab({ config, history, persist, setPlaybook }: {
   const cur = current ? history.find((h) => h.id === current.id) || current : null
 
 
-  return { scenario, setScenario, aircraft, setAircraft, crowd, setCrowd, env, setEnv, camera, setCamera, hook, setHook, multiShot, setMultiShot, punchyOpen, setPunchyOpen, region, setRegion, varyCoverage, setVaryCoverage, useTrends, setUseTrends, boost, setBoost, longPrompt, setLongPrompt, candidateMode, setCandidateMode, candidates, setCandidates, nudge, setNudge, explore, setExplore, savedConcepts, setSavedConcepts, conceptLoading, setConceptLoading, loading, setLoading, learnCount, setLearnCount, error, setError, current, setCurrent, pickedTags, setPickedTags, comment, setComment, reachDraft, setReachDraft, viewsDraft, setViewsDraft, excludeCoverage, setExcludeCoverage, toast, setToast, captioning, setCaptioning, showLearn, setShowLearn, learning, toastTimer, flashToast, brainInsights, rated, tierCount, hookTries, hookStrong, toscoreCount, generateRef, count, charLimit, over, sections, cur, doLearn, buildEntry, buildReq, resetScoringDraft, startNew, conceptScenario, resolveScenario, autoRender, generateFrom, generate, surpriseConcept, saveThisConcept, remixWinner, chooseCandidate, openEntry, updateEntry, submitScore, patchCurrent, titleAvoidList, regenerateTitle, writeCaption }
+  // --- Batch lineup ---------------------------------------------------------------
+  // Writes N prompts one after another and (optionally) queues each for rendering as
+  // soon as it's written. Runs in this hook (owned by App), so it keeps going while you
+  // switch screens. Lever settings are the ones on screen when it starts (this closure);
+  // scenario picks read the latest history so the mix keeps varying.
+  const historyRef = useRef(history)
+  historyRef.current = history
+  const [lineupOpen, setLineupOpen] = useState(false)
+  const [lineup, setLineup] = useState<LineupRun | null>(null)
+  const lineupStop = useRef(false)
+
+  async function runLineup(o: LineupOptions) {
+    if (lineup?.running) return
+    lineupStop.current = false
+    const items: LineupItem[] = Array.from({ length: o.count }, (_, i) => ({ n: i + 1, status: 'waiting' }))
+    const run: LineupRun = { running: true, items, total: o.count, render: o.render, startedAt: Date.now() }
+    const update = (i: number, p: Partial<LineupItem>): void => {
+      run.items = run.items.map((it, k) => (k === i ? { ...it, ...p } : it))
+      setLineup({ ...run })
+    }
+    setLineup({ ...run })
+    for (let i = 0; i < o.count; i++) {
+      if (lineupStop.current) { for (let k = i; k < o.count; k++) update(k, { status: 'skipped' }); break }
+      const resolved = o.scenarioId === 'random' ? pickRandomScenario(historyRef.current, explore) : resolveScenario(o.scenarioId)
+      if (!resolved) { update(i, { status: 'failed', error: 'Scenario not found' }); continue }
+      update(i, { status: 'writing', scenario: resolved.label })
+      try {
+        const req = { ...buildReq(resolved), nudge: o.direction }
+        const extra: Partial<Entry> = { nudge: o.direction.trim(), ...(resolved.id.startsWith('concept:') ? { conceptBrief: resolved.brief } : {}) }
+        const res = await window.api.generate(req)
+        const entry = { ...buildEntry(resolved, res, extra), id: Date.now() }
+        persist((prev) => [entry, ...prev])
+        update(i, { status: 'written', title: entry.title || resolved.label, entryId: entry.id })
+        if (o.render) {
+          // The history write rides IPC; give it a beat before main looks the entry up.
+          await new Promise((r) => setTimeout(r, 400))
+          await window.api.renderSubmit([entry.id], { references: o.references })
+          update(i, { status: 'queued' })
+        }
+      } catch (e: any) {
+        update(i, { status: 'failed', error: String(e?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '').slice(0, 200) })
+      }
+    }
+    run.running = false
+    setLineup({ ...run })
+    const ok = run.items.filter((it) => it.status === 'written' || it.status === 'queued').length
+    flashToast(`Lineup done: ${ok} of ${o.count} prompt${o.count === 1 ? '' : 's'}${o.render ? ' queued for rendering' : ' written'} ✓`)
+  }
+
+  function stopLineup() { lineupStop.current = true }
+
+  return { lineupOpen, setLineupOpen, lineup, setLineup, runLineup, stopLineup, scenario, setScenario, aircraft, setAircraft, crowd, setCrowd, env, setEnv, camera, setCamera, hook, setHook, multiShot, setMultiShot, punchyOpen, setPunchyOpen, region, setRegion, varyCoverage, setVaryCoverage, useTrends, setUseTrends, boost, setBoost, longPrompt, setLongPrompt, candidateMode, setCandidateMode, candidates, setCandidates, nudge, setNudge, explore, setExplore, savedConcepts, setSavedConcepts, conceptLoading, setConceptLoading, loading, setLoading, learnCount, setLearnCount, error, setError, current, setCurrent, pickedTags, setPickedTags, comment, setComment, reachDraft, setReachDraft, viewsDraft, setViewsDraft, excludeCoverage, setExcludeCoverage, toast, setToast, captioning, setCaptioning, showLearn, setShowLearn, learning, toastTimer, flashToast, brainInsights, rated, tierCount, hookTries, hookStrong, toscoreCount, generateRef, count, charLimit, over, sections, cur, doLearn, buildEntry, buildReq, resetScoringDraft, startNew, conceptScenario, resolveScenario, autoRender, generateFrom, generate, surpriseConcept, saveThisConcept, remixWinner, chooseCandidate, openEntry, updateEntry, submitScore, patchCurrent, titleAvoidList, regenerateTitle, writeCaption }
 }
 
 export type LabState = ReturnType<typeof useLab>
+
+export interface LineupOptions {
+  count: number
+  /** 'random' = weighted pick per prompt (Exploration lever), else one scenario id. */
+  scenarioId: string
+  /** Optional direction added to every prompt. */
+  direction: string
+  /** Queue each prompt for rendering as soon as it's written. */
+  render: boolean
+  references: boolean
+}
+export interface LineupItem {
+  n: number
+  status: 'waiting' | 'writing' | 'written' | 'queued' | 'failed' | 'skipped'
+  scenario?: string
+  title?: string
+  entryId?: number
+  error?: string
+}
+export interface LineupRun { running: boolean; items: LineupItem[]; total: number; render: boolean; startedAt: number }
