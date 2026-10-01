@@ -18,7 +18,7 @@ import { varietyNote } from '../shared/variety'
 import { DOLA_CHECK_SYSTEM, dolaCheckMsg, parseDolaCheck, type RenderCheckResult } from '../shared/renderCheck'
 import { BRAINSTORM_SYSTEM, buildBrainstormMessage, parseBrainstorm, formatEvidence, triedConceptList } from '../shared/brainstorm'
 import { buildReferenceBlock, fillImage1 } from '../shared/references'
-import { initRenderQueue, readJobReply, actOnJob, clearCooldown, clearCreditsFor, resetUsage, startAccount, showAccount, overview as renderOverview, submit as renderSubmit, cancel as renderCancel, retry as renderRetry, remove as renderRemove, listJobs, updateJob, pauseQueue, resumeQueue, setOnRenderDone, clearCredits } from './render'
+import { initRenderQueue, readJobReply, actOnJob, clearCooldown, clearCreditsFor, resetUsage, startAccount, showAccount, checkLogins, resetLoginCount, overview as renderOverview, submit as renderSubmit, cancel as renderCancel, retry as renderRetry, remove as renderRemove, listJobs, updateJob, pauseQueue, resumeQueue, setOnRenderDone, clearCredits } from './render'
 import { SYSTEM, TITLE_SYSTEM, LEARN_SYSTEM, EXTRACT_SYSTEM, TREND_SYSTEM, CAPTION_SYSTEM, CONCEPT_SYSTEM, longLimit, buildUserMessage, titleMsg, captionMsg, buildLearnMessage, buildRedistillMessage, buildConceptMessage, extractMsg, parseScene, parseConcept, trendsMsg, parseVariants } from '../shared/prompts'
 import { cleanTitle, toFilename, clampPlaybook } from '../shared/util'
 import { overusedOperators } from '../shared/brain'
@@ -607,6 +607,8 @@ function registerIpc(): void {
   ipcMain.handle('instances:resetUsage', (_e, id?: number) => { resetUsage(id); return true })
   ipcMain.handle('instances:start', (_e, id: number) => startAccount(id).then(() => true))
   ipcMain.handle('instances:show', (_e, id: number) => showAccount(id).then(() => true))
+  ipcMain.handle('instances:checkLogin', (_e, id?: number) => checkLogins(id))
+  ipcMain.handle('instances:resetLoginCount', (_e, id: number) => { resetLoginCount(id); return true })
   ipcMain.handle('instances:reserve', (_e, id: number, on: boolean) => {
     const cur = getConfig().render.excludeInstances
     const next = on ? [...new Set([...cur, id])] : cur.filter((x) => x !== id)

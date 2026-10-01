@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { BrainstormIdea } from '../shared/brainstorm'
 import type { RenderCheckResult } from '../shared/renderCheck'
 import type {
-  AppConfig, Entry, GenerateRequest, GenerateResult, LearningLogEntry, CliTestResult, LogLine, SavedConcept, RenderJob, RenderOverview, ReviewVerdict, UsageRow,
+  AppConfig, Entry, GenerateRequest, GenerateResult, LearningLogEntry, CliTestResult, LogLine, SavedConcept, RenderJob, RenderOverview, ReviewVerdict, UsageRow, LoginCheck,
 } from '../shared/types'
 
 const api = {
@@ -55,6 +55,10 @@ const api = {
   instanceResetUsage: (id?: number): Promise<boolean> => ipcRenderer.invoke('instances:resetUsage', id),
   instanceStart: (id: number): Promise<boolean> => ipcRenderer.invoke('instances:start', id),
   instanceShow: (id: number): Promise<boolean> => ipcRenderer.invoke('instances:show', id),
+  /** Is Dola logged in? One account, or every running one when id is omitted. Clears / sets the logged-out state. */
+  instanceCheckLogin: (id?: number): Promise<LoginCheck[]> => ipcRenderer.invoke('instances:checkLogin', id),
+  /** Start the renders-since-login count again. */
+  instanceResetLoginCount: (id: number): Promise<boolean> => ipcRenderer.invoke('instances:resetLoginCount', id),
   /** Reserve (never auto-render on) or release an account; returns the updated config. */
   instanceReserve: (id: number, on: boolean): Promise<AppConfig> => ipcRenderer.invoke('instances:reserve', id, on),
   /** fresh=false re-checks the job's existing Dola chat; fresh=true renders again from scratch. */

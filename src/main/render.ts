@@ -11,9 +11,9 @@ import path from 'node:path'
 import { getConfig, getRenderJobs, setRenderJobs } from './store'
 import { getEntry, getMeta, setMeta } from './db'
 import { notify } from './notify'
-import { listInstances, startInstance, showInstance, waitUntilDrawn, getPage, forget, fillVideoPrompt, sendAndHandleBusy, waitForVideo, readLastReply, Cancelled, NoCreditsError, type CreditsInfo } from './dola/driver'
+import { listInstances, startInstance, showInstance, waitUntilDrawn, getPage, forget, fillVideoPrompt, sendAndHandleBusy, waitForVideo, readLastReply, warmUp, assertLoggedIn, loginState, Cancelled, NoCreditsError, LoggedOutError, type CreditsInfo } from './dola/driver'
 import { resolveFallbackApi, downloadFile } from './dola/resolver'
-import type { RenderJob, RenderOverview, DolaInstanceInfo, LogLevel, QueuePause, InstanceUsage } from '../shared/types'
+import type { RenderJob, RenderOverview, DolaInstanceInfo, LogLevel, QueuePause, InstanceUsage, LoginCheck } from '../shared/types'
 
 const BUSY_COOLDOWN_MS = 30 * 60_000
 const MAX_ATTEMPTS = 3
@@ -66,6 +66,7 @@ const usedToday = (id: number): number => usage[id]?.days[dayKey()] ?? 0
 function recordSend(id: number): void {
   const u = usageOf(id), day = dayKey()
   u.total++; u.days[day] = (u.days[day] ?? 0) + 1; u.lastUsed = new Date().toISOString()
+  u.sinceLogin = (u.sinceLogin ?? 0) + 1
   for (const d of Object.keys(u.days).sort().slice(0, -14)) delete u.days[d] // keep two weeks
   saveUsage()
 }
@@ -180,6 +181,87 @@ export function clearCreditsFor(id: number): void { delete creditsOut[id]; saveC
 export function clearCredits(): void { creditsOut = {}; saveCredits(); emitLog('info', 'Dola credit rests cleared.'); save(); pump() }
 let creditsNotifiedUntil = 0
 
+// --- Dola logouts ----------------------------------------------------------------------
+// Dola signs accounts out by itself now and then (e.g. after a number of generations). A
+// logged-out account is skipped until a login check finds it logged in again — before every
+// send, while waiting, from the Accounts screen, or on the optional timer. Its render moves
+// to another account without counting as a try. Persisted in meta 'dola_logged_out'.
+interface LoggedOutRec { since: number; reason: string }
+let loggedOut: Record<number, LoggedOutRec> = {}
+function loadLoggedOut(): void { try { loggedOut = JSON.parse(getMeta('dola_logged_out') || '{}') } catch { loggedOut = {} } }
+function saveLoggedOut(): void { setMeta('dola_logged_out', JSON.stringify(loggedOut)) }
+const isLoggedOut = (id: number): boolean => !!loggedOut[id]
+/** Settings → Render → renders per login: rest the account once it has sent this many since its last login. */
+function loginCapReached(id: number): boolean {
+  const cap = getConfig().render.perLoginCap ?? 0
+  return cap > 0 && (usage[id]?.sinceLogin ?? 0) >= cap
+}
+let noAccountNotified = false
+
+/** Mark an account logged out (once) and remember how many renders it had sent. Returns true if it was new. */
+function markLoggedOut(inst: { id: number; name: string }, reason: string): boolean {
+  if (loggedOut[inst.id]) return false
+  loggedOut[inst.id] = { since: Date.now(), reason }
+  saveLoggedOut()
+  const u = usageOf(inst.id)
+  u.logoutsAfter = [...(u.logoutsAfter ?? []), u.sinceLogin ?? 0].slice(-10)
+  saveUsage()
+  forget(inst.id)
+  return true
+}
+
+/** Logged back in: clear the mark and start counting renders-since-login again. */
+function markLoggedIn(inst: { id: number; name: string }): void {
+  if (!loggedOut[inst.id]) return
+  delete loggedOut[inst.id]
+  saveLoggedOut()
+  usageOf(inst.id).sinceLogin = 0
+  saveUsage()
+  noAccountNotified = false
+  emitLog('ok', `${inst.name} is logged in to Dola again — back in the render rotation.`)
+}
+
+function onLoggedOut(job: RenderJob, inst: { id: number; name: string }, reason: string): void {
+  const fresh = markLoggedOut(inst, reason)
+  const after = usage[inst.id]?.logoutsAfter?.slice(-1)[0]
+  const afterTxt = after != null ? ` after ${after} render${after === 1 ? '' : 's'}` : ''
+  emitLog('warn', `Dola logged ${inst.name} out${afterTxt} (${reason}) — moving "${job.title}" to another account. Log in again on ${inst.name}, then Check login on the Accounts screen.`)
+  if (fresh) notify('loggedOut', `Dola logged ${inst.name} out`, `${after != null ? `After ${after} renders. ` : ''}"${job.title}" moved to another account. Log in again, then Check login on Accounts.`, 'instances')
+  job.attempts = Math.max(0, job.attempts - 1) // not the job's fault
+  const earlier = job.chatUrl ? ` (earlier chat: ${job.chatUrl})` : ''
+  patch(job, { status: 'queued', chatUrl: undefined, sentAt: undefined, instanceId: undefined, instanceName: undefined, note: `${inst.name} was logged out of Dola; moved to another account${earlier}` })
+}
+
+/**
+ * Login check (Accounts screen, timer): one account, or every running one. Reads each page
+ * as it is — no navigation — so it's safe while a render runs on it.
+ */
+export async function checkLogins(id?: number): Promise<LoginCheck[]> {
+  const all = await listInstances()
+  const targets = id == null ? all.filter((i) => i.isInitialized) : all.filter((i) => i.id === id)
+  const out = await Promise.all(targets.map(async (i): Promise<LoginCheck> => {
+    if (!i.isInitialized) return { id: i.id, name: i.name, loggedIn: null, reason: `not running (${i.status})` }
+    try {
+      const { page } = await getPage(i.id)
+      const st = await loginState(page)
+      if (st.loggedIn === true) markLoggedIn(i)
+      else if (st.loggedIn === false && markLoggedOut(i, st.reason)) {
+        emitLog('warn', `${i.name} is logged out of Dola (${st.reason}) — skipped until it's logged in again.`)
+        notify('loggedOut', `Dola logged ${i.name} out`, 'Log in again on that account, then Check login on Accounts.', 'instances')
+      }
+      return { id: i.id, name: i.name, ...st }
+    } catch (e: any) {
+      return { id: i.id, name: i.name, loggedIn: null, reason: e?.message || String(e) }
+    }
+  }))
+  save(); pump()
+  return out
+}
+
+/** Start the renders-since-login count again (e.g. after logging out and in by hand). */
+export function resetLoginCount(id: number): void { usageOf(id).sinceLogin = 0; saveUsage(); save(); pump() }
+let lastLoginSweep = Date.now()
+
 // Called once per finished render (the AI pre-check hooks in here).
 let onRenderDone: (job: RenderJob) => void = () => { /* set by index.ts */ }
 export function setOnRenderDone(fn: (job: RenderJob) => void): void { onRenderDone = fn }
@@ -200,6 +282,7 @@ export function initRenderQueue(log: Emit, change: OnChange, refs?: (job: Render
   loadCredits()
   loadCooldown()
   loadUsage()
+  loadLoggedOut()
   // Anything mid-flight when the app last closed: resume waiting if it was already
   // sent (chatUrl known), otherwise put it back in the queue from scratch.
   let resumed = 0, requeued = 0
@@ -210,6 +293,11 @@ export function initRenderQueue(log: Emit, change: OnChange, refs?: (job: Render
   }
   if (resumed || requeued) { setRenderJobs(jobs); emitLog('info', `Render queue restored: ${resumed} resuming, ${requeued} re-queued.`) }
   setInterval(() => { if (jobs.some((j) => j.status === 'queued')) pump() }, 60_000).unref?.()
+  // Optional login sweep (Settings → Render → check logins every N minutes).
+  setInterval(() => {
+    const m = getConfig().render.loginCheckMinutes ?? 0
+    if (m > 0 && Date.now() - lastLoginSweep >= m * 60_000) { lastLoginSweep = Date.now(); checkLogins().catch(() => { /* Control API down — try next time */ }) }
+  }, 60_000).unref?.()
   pump()
 }
 
@@ -228,6 +316,10 @@ export async function overview(): Promise<RenderOverview> {
       currentJob: activeJob.has(i.id) ? getJob(activeJob.get(i.id)!)?.title : undefined,
       cooldownUntil: (cooldown.get(i.id) ?? 0) > Date.now() ? cooldown.get(i.id) : undefined,
       ...(outOfCredits(i.id) ? { creditsOutUntil: creditsOut[i.id].until, creditsNeed: creditsOut[i.id].need, creditsLeft: creditsOut[i.id].left } : {}),
+      ...(loggedOut[i.id] ? { loggedOutSince: loggedOut[i.id].since, loggedOutReason: loggedOut[i.id].reason } : {}),
+      sinceLogin: usage[i.id]?.sinceLogin ?? 0,
+      logoutsAfter: usage[i.id]?.logoutsAfter,
+      loginCapReached: loginCapReached(i.id) || undefined,
     }))
     return { ...base, instances }
   } catch (e: any) {
@@ -379,7 +471,7 @@ async function pickInstance(job: RenderJob): Promise<{ id: number; name: string;
     return activeInstances.has(inst.id) ? null : inst
   }
   const skip = new Set([...cfg.excludeInstances, ...job.tried.filter((id) => !(creditsOut[id] && !outOfCredits(id)))])
-  const free = all.filter((i) => !skip.has(i.id) && !activeInstances.has(i.id) && (cooldown.get(i.id) ?? 0) < Date.now() && !outOfCredits(i.id) && !limitReached(i.id))
+  const free = all.filter((i) => !skip.has(i.id) && !activeInstances.has(i.id) && (cooldown.get(i.id) ?? 0) < Date.now() && !outOfCredits(i.id) && !limitReached(i.id) && !isLoggedOut(i.id) && !loginCapReached(i.id))
   if (cfg.pickStrategy === 'first') return free.find((i) => i.isInitialized) ?? (cfg.autoStartInstances ? free.find((i) => !i.isInitialized) : undefined) ?? null
   // Balanced: fewest renders today, then least recently used, then one that's already running.
   const pool = free.filter((i) => i.isInitialized || cfg.autoStartInstances)
@@ -399,6 +491,10 @@ async function pump(): Promise<void> {
       const paused = getPause()
       for (const job of [...jobs].reverse()) { // oldest first
         if (job.status !== 'queued') continue
+        // Sent on an account Dola has since logged out: its chat is out of reach, so send again elsewhere.
+        if (job.chatUrl && job.instanceId != null && isLoggedOut(job.instanceId)) {
+          patch(job, { chatUrl: undefined, sentAt: undefined, instanceId: undefined, instanceName: undefined, note: `${job.instanceName || 'Its account'} was logged out of Dola; sending again on another account (earlier chat: ${job.chatUrl})` })
+        }
         const resuming = !!job.chatUrl
         if (paused && !resuming) {
           const note = 'Sending paused — resume it on the Renders page'
@@ -427,6 +523,18 @@ async function pump(): Promise<void> {
             const note = `All Dola accounts are out of video credits — continues at ${hhmm(back)}`
             if (job.note !== note) patch(job, { note })
             if (creditsNotifiedUntil !== back) { creditsNotifiedUntil = back; notify('creditsOut', 'Dola accounts are out of video credits', `Renders continue at ${hhmm(back)}, when Dola's daily credits reset.`, 'renders') }
+            continue
+          }
+        }
+        if (!inst && !resuming) {
+          // Nothing left but logged-out / login-limit accounts? Say what to do.
+          const usable = (await listInstances().catch(() => [])).filter((i) => !cfg.excludeInstances.includes(i.id))
+          const out = usable.filter((i) => isLoggedOut(i.id)).length, capped = usable.filter((i) => !isLoggedOut(i.id) && loginCapReached(i.id)).length
+          if (usable.length && (out || capped) && usable.every((i) => isLoggedOut(i.id) || loginCapReached(i.id) || outOfCredits(i.id) || limitReached(i.id))) {
+            const why = [out ? `${out} logged out of Dola` : '', capped ? `${capped} at the renders-per-login limit` : ''].filter(Boolean).join(', ')
+            const note = `No account can render right now (${why}) — log them in again, then Check login on Accounts`
+            if (job.note !== note) patch(job, { note })
+            if (!noAccountNotified) { noAccountNotified = true; notify('loggedOut', 'No Dola account can render', `${why[0].toUpperCase()}${why.slice(1)}. Log them in again, then Check login on Accounts.`, 'instances') }
             continue
           }
         }
@@ -492,7 +600,20 @@ async function runJob(job: RenderJob, inst: { id: number; name: string; isInitia
         emitLog('step', `Sending "${job.title}" to Dola on ${inst.name}…`)
         await showInstance(inst.id)
         if (!(await waitUntilDrawn(page))) throw new Error(`${inst.name} is not being drawn on screen in DolaMultiBrowser, so its chat box can't be typed into. Is DolaMultiBrowser minimised?`)
-        await fillVideoPrompt(page, { prompt: job.prompt, model: cfg.model, duration: cfg.duration, aspect: cfg.aspect, instructions: job.instructions, references: job.references })
+        await assertLoggedIn(page, inst.name)
+        // Warm-up: say hello in a new chat, wait for the reply, then send the video prompt in that chat.
+        const warm = cfg.warmup ?? true
+        if (warm) {
+          const msg = (cfg.warmupMessage ?? '').trim() || 'Hi'
+          own({ note: `Warm-up: "${msg}"` })
+          const w = await warmUp(page, msg, cancelled)
+          if (w.busy) emitLog('warn', `${inst.name} answered the warm-up with "high demand" — sending the video prompt anyway (busy retry applies).`)
+          else if (!w.replied) emitLog('warn', `${inst.name} didn't answer the warm-up within 90 s — sending the video prompt anyway.`)
+          await assertLoggedIn(page, inst.name)
+          own({ note: undefined })
+        }
+        await fillVideoPrompt(page, { prompt: job.prompt, model: cfg.model, duration: cfg.duration, aspect: cfg.aspect, instructions: job.instructions, references: job.references, newChat: !warm })
+        await assertLoggedIn(page, inst.name)
         return sendAndHandleBusy(page, cancelled)
       })
       own({ chatUrl: sent.url })
@@ -514,7 +635,7 @@ async function runJob(job: RenderJob, inst: { id: number; name: string; isInitia
 
     own({ status: 'generating', note: undefined })
     emitLog('info', `Dola is generating "${job.title}" on ${inst.name} (usually 10–15 min)…`)
-    const apis = await waitForVideo(page, { chatUrl: job.chatUrl, waitMinutes: cfg.waitMinutes, cancel: cancelled })
+    const apis = await waitForVideo(page, { chatUrl: job.chatUrl, waitMinutes: cfg.waitMinutes, cancel: cancelled, account: inst.name })
 
     own({ status: 'downloading' })
     const v = await resolveFallbackApi(apis[apis.length - 1])
@@ -537,6 +658,7 @@ async function runJob(job: RenderJob, inst: { id: number; name: string; isInitia
   } catch (e: any) {
     if (stale()) return // released by a forced Check action — the job has already moved on
     if (e instanceof NoCreditsError) { onNoCredits(job, inst, e.info); return }
+    if (e instanceof LoggedOutError) { onLoggedOut(job, inst, e.reason); return }
     if (e instanceof Cancelled) {
       const action = pendingAction.get(job.id)
       if (action) { pendingAction.delete(job.id); cancelFlags.delete(job.id); applyAction(job, action, inst.id); return }
