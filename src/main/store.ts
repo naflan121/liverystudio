@@ -48,6 +48,9 @@ export const DEFAULT_AI: AiSettings = {
   minimax: { enabled: false, cliPath: '', dailyTokenLimit: 500000 },
   routes: { title: 'claude:generation', caption: 'claude:generation', scene: 'claude:claude-haiku-4-5', refAircraft: 'claude:claude-haiku-4-5', dolaCheck: 'claude:claude-haiku-4-5', brainAgent: 'minimax:MiniMax-M3' },
   precheck: { enabled: false, model: 'MiniMax-M3', auto: true },
+  // Phase 2+ brain agent: on-demand via Today, reactive after 5 rejections + 30 min idle,
+  // nightly maintenance every 48h (first one 5 minutes after start).
+  brainAgent: { autoPeriodic: true, cadenceHours: 48, reactiveThreshold: 5 },
 }
 
 export const DEFAULT_NOTIFY: NotifySettings = {
@@ -275,6 +278,7 @@ export function getConfig(): AppConfig {
       minimax: { ...DEFAULT_AI.minimax, ...(stored.ai?.minimax || {}) },
       routes: { ...DEFAULT_AI.routes, ...(stored.ai?.routes || {}) },
       precheck: { ...DEFAULT_AI.precheck, ...(stored.ai?.precheck || {}) },
+      brainAgent: { ...DEFAULT_AI.brainAgent, ...(stored.ai?.brainAgent || {}) },
     },
   }
 }

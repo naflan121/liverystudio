@@ -63,7 +63,7 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
   const [c, setC] = useState<AppConfig>(() => ({
     ...config,
     review: { ...REVIEW_DEFAULTS, ...(config.review || {}) },
-    notify: { enabled: true, onlyWhenUnfocused: true, renderDone: true, renderFailed: true, capReached: true, queuePaused: true, autoRetry: false, creditsOut: true, loggedOut: true, connectionError: true, ...(config.notify || {}) },
+    notify: { enabled: true, onlyWhenUnfocused: true, renderDone: true, renderFailed: true, capReached: true, queuePaused: true, autoRetry: false, creditsOut: true, loggedOut: true, connectionError: true, brainDigest: true, ...(config.notify || {}) },
     render: { ...config.render, pauseAfterFailures: config.render?.pauseAfterFailures ?? 3, creditResetHour: config.render?.creditResetHour ?? 0 },
     ai: {
       minimax: { enabled: false, cliPath: '', dailyTokenLimit: 500000, ...(config.ai?.minimax || {}) },
@@ -191,7 +191,7 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
   const setRender = (patch: Partial<AppConfig['render']>) => setC((prev) => ({ ...prev, render: { ...prev.render, ...patch } }))
   const setReview = (patch: Partial<AppConfig['review']>) => setC((prev) => ({ ...prev, review: { ...prev.review, ...patch } }))
   const setNotify = (patch: Partial<AppConfig['notify']>) => setC((prev) => ({ ...prev, notify: { ...prev.notify, ...patch } }))
-  const setAi = (part: 'minimax' | 'routes' | 'precheck', patch: Record<string, unknown>) => setC((prev) => ({ ...prev, ai: { ...prev.ai, [part]: { ...prev.ai[part], ...patch } } }))
+  const setAi = (part: 'minimax' | 'routes' | 'precheck' | 'brainAgent', patch: Record<string, unknown>) => setC((prev) => ({ ...prev, ai: { ...prev.ai, [part]: { ...(prev.ai[part] || {}), ...patch } } }))
   const [mm, setMm] = useState<{ installed: boolean; cli: string | null; models: { id: string; video: boolean }[] } | null>(null)
   const [mmTestModel, setMmTestModel] = useState('')
   const [mmTest, setMmTest] = useState<{ ok: boolean; message: string } | null>(null)
@@ -461,6 +461,34 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13.5, alignSelf: 'end', paddingBottom: 10 }}>
                 <input type="checkbox" checked={c.ai.precheck.auto} onChange={(e) => setAi('precheck', { auto: e.target.checked })} style={{ width: 16, height: 16, accentColor: ACCENT }} /> Run automatically when a render finishes
               </label>
+            </div>
+          </Card>
+          )}
+
+          {!isBrain && (
+          <Card title="Brain agent cadence (Phase 2+)" id="s-brain-cadence">
+            <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>
+              The brain agent audits your render lessons, clusters rejections and finds missed combos. Three triggers:
+              <ul style={{ margin: '6px 0 0 18px', padding: 0, lineHeight: 1.7 }}>
+                <li><strong>On-demand</strong> — Today screen → 🧠 Run digest (always available, doesn't change anything until you click Apply).</li>
+                <li><strong>Reactive</strong> — after every N rejections, if you haven't generated in 30 minutes. Costs ~3–8k MiniMax tokens.</li>
+                <li><strong>Periodic</strong> — nightly/weekly maintenance on the cadence you pick here. Costs ~30–60k MiniMax tokens per pass.</li>
+              </ul>
+              All runs respect the MiniMax daily token limit and never fire during active work.
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+              <Field label="Reactive threshold (rejections)">
+                <input type="number" min={3} max={20} value={c.ai.brainAgent?.reactiveThreshold ?? 5} onChange={(e) => setAi('brainAgent', { reactiveThreshold: Math.max(3, Number(e.target.value) || 5) })} disabled={!c.ai.minimax.enabled} style={{ width: '100%', padding: '8px 10px', border: `1px solid ${LINE}`, borderRadius: 8, fontSize: 13, boxSizing: 'border-box', color: INK, opacity: c.ai.minimax.enabled ? 1 : 0.5 }} />
+              </Field>
+              <Field label="Auto-run periodically">
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: c.ai.minimax.enabled ? 'pointer' : 'not-allowed', fontSize: 13.5, padding: '8px 0', opacity: c.ai.minimax.enabled ? 1 : 0.5 }}>
+                  <input type="checkbox" disabled={!c.ai.minimax.enabled} checked={c.ai.brainAgent?.autoPeriodic ?? true} onChange={(e) => setAi('brainAgent', { autoPeriodic: e.target.checked })} style={{ width: 16, height: 16, accentColor: ACCENT }} />
+                  {c.ai.minimax.enabled ? `every ${c.ai.brainAgent?.cadenceHours ?? 48}h` : '(switch MiniMax on first)'}
+                </label>
+              </Field>
+              <Field label="Cadence (hours, 6+)">
+                <input type="number" min={6} max={168} value={c.ai.brainAgent?.cadenceHours ?? 48} onChange={(e) => setAi('brainAgent', { cadenceHours: Math.max(6, Number(e.target.value) || 48) })} disabled={!c.ai.minimax.enabled || !c.ai.brainAgent?.autoPeriodic} style={{ width: '100%', padding: '8px 10px', border: `1px solid ${LINE}`, borderRadius: 8, fontSize: 13, boxSizing: 'border-box', color: INK, opacity: c.ai.minimax.enabled && c.ai.brainAgent?.autoPeriodic ? 1 : 0.5 }} />
+              </Field>
             </div>
           </Card>
           )}
@@ -885,6 +913,7 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
                 ['creditsOut', 'Out of Dola credits', 'every account used its daily credits'],
                 ['loggedOut', 'Dola logged an account out', 'its render moved to another account — log it in again'],
                 ['connectionError', "An account can't connect", 'proxy rejected or unreachable — its render moved on'],
+                ['brainDigest', 'Brain agent digest is ready', 'manual / reactive / nightly — opens the Today screen'],
               ] as const).map(([k, label, hint]) => (
                 <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13.5 }}>
                   <input type="checkbox" disabled={!c.notify.enabled} checked={c.notify[k]} onChange={(e) => setNotify({ [k]: e.target.checked })} style={{ width: 16, height: 16, accentColor: ACCENT }} />

@@ -321,6 +321,15 @@ export interface AiSettings {
     /** Run automatically when a render finishes (otherwise only from the Review button). */
     auto: boolean
   }
+  /** Phase 2+ brain agent cadence. Optional so old stored configs still load. */
+  brainAgent?: {
+    /** Run the digest automatically every `cadenceHours` hours when the app is open and the user is idle. */
+    autoPeriodic: boolean
+    /** Hours between auto-runs. Minimum 6. */
+    cadenceHours: number
+    /** Rejections between reactive runs (also gated on the 30-min idle quiet time). Minimum 3. */
+    reactiveThreshold: number
+  }
 }
 
 export interface PreCheck {

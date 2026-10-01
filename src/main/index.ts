@@ -94,6 +94,7 @@ const BRAIN_QUIET_MINUTES = 30
 let brainRejectionsSinceDigest = 0
 let lastBrainDigestAt = 0
 let lastGenerationAt = Date.now()
+let brainPeriodicHandle: NodeJS.Timeout | null = null
 function noteGeneration(): void { lastGenerationAt = Date.now() }
 
 /** Run the brain digest: gather history + lessons + rejections, call runBrainDigest, toast the summary. */
@@ -140,10 +141,9 @@ function onRejectionRecorded(): void {
   brainRejectionsSinceDigest++
   const cfg = getConfig()
   if (!cfg.ai.minimax.enabled) return // off
-  const sinceGen = Date.now() - lastGenerationAt
-  const threshold = Math.max(3, cfg.review.maxAutoRetries ? 5 : BRAIN_REACTIVE_THRESHOLD)
+  const threshold = Math.max(3, cfg.ai.brainAgent?.reactiveThreshold ?? BRAIN_REACTIVE_THRESHOLD)
   if (brainRejectionsSinceDigest < threshold) return
-  if (sinceGen < BRAIN_QUIET_MINUTES * 60_000) return // user is active, wait
+  if (Date.now() - lastGenerationAt < BRAIN_QUIET_MINUTES * 60_000) return // user is active, wait
   runBrainDigestNow({ source: 'reactive' }).catch((e) => emitLog('warn', `Reactive brain digest failed: ${e?.message || e}`))
 }
 
@@ -802,15 +802,22 @@ if (!gotLock) {
     // Brain agent nightly maintenance. Cadence is in hours (default every 2 days). Skipped when
     // the user has generated in the last hour so it never fights active work. Token-cost is
     // bounded by ai.minimax.dailyTokenLimit in callModel.
-    const BRAIN_PERIODIC_MS = Math.max(6, getConfig().review.maxAutoRetries ? 24 : 48) * 60 * 60_000
     const brainPeriodic = (): void => {
       const cfg = getConfig()
       if (!cfg.ai.minimax.enabled) return
+      if (!cfg.ai.brainAgent?.autoPeriodic) return
       if (Date.now() - lastGenerationAt < 60 * 60_000) return
       runBrainDigestNow({ source: 'periodic' }).catch((e) => emitLog('warn', `Periodic brain digest failed: ${e?.message || e}`))
     }
+    const installPeriodic = (): void => {
+      const cfg = getConfig()
+      const cadenceH = Math.max(6, cfg.ai.brainAgent?.cadenceHours ?? 48)
+      if (brainPeriodicHandle) clearInterval(brainPeriodicHandle)
+      brainPeriodicHandle = setInterval(brainPeriodic, cadenceH * 60 * 60_000)
+      brainPeriodicHandle.unref?.()
+    }
     setTimeout(brainPeriodic, 5 * 60_000) // first one 5 min after start
-    setInterval(brainPeriodic, BRAIN_PERIODIC_MS).unref?.()
+    installPeriodic()
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
   })
 
