@@ -63,7 +63,7 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
   const [c, setC] = useState<AppConfig>(() => ({
     ...config,
     review: { ...REVIEW_DEFAULTS, ...(config.review || {}) },
-    notify: { enabled: true, onlyWhenUnfocused: true, renderDone: true, renderFailed: true, capReached: true, queuePaused: true, autoRetry: false, creditsOut: true, loggedOut: true, ...(config.notify || {}) },
+    notify: { enabled: true, onlyWhenUnfocused: true, renderDone: true, renderFailed: true, capReached: true, queuePaused: true, autoRetry: false, creditsOut: true, loggedOut: true, connectionError: true, ...(config.notify || {}) },
     render: { ...config.render, pauseAfterFailures: config.render?.pauseAfterFailures ?? 3, creditResetHour: config.render?.creditResetHour ?? 0 },
     ai: {
       minimax: { enabled: false, cliPath: '', dailyTokenLimit: 500000, ...(config.ai?.minimax || {}) },
@@ -812,6 +812,7 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
                 ['autoRetry', 'Automatic retry', 'after every take was rejected'],
                 ['creditsOut', 'Out of Dola credits', 'every account used its daily credits'],
                 ['loggedOut', 'Dola logged an account out', 'its render moved to another account — log it in again'],
+                ['connectionError', "An account can't connect", 'proxy rejected or unreachable — its render moved on'],
               ] as const).map(([k, label, hint]) => (
                 <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13.5 }}>
                   <input type="checkbox" disabled={!c.notify.enabled} checked={c.notify[k]} onChange={(e) => setNotify({ [k]: e.target.checked })} style={{ width: 16, height: 16, accentColor: ACCENT }} />

@@ -353,6 +353,8 @@ export interface NotifySettings {
   autoRetry: boolean
   /** Dola logged an account out (its render moved to another account). */
   loggedOut?: boolean
+  /** An account couldn't connect (proxy rejected / unreachable) — its render moved to another account. */
+  connectionError?: boolean
   /** Every usable Dola account is out of video credits for today. */
   creditsOut: boolean
 }
@@ -409,6 +411,10 @@ export interface DolaInstanceInfo {
   logoutsAfter?: number[]
   /** Reached Settings → Render → renders per login. */
   loginCapReached?: boolean
+  /** Its browser couldn't reach Dola (proxy rejected / unreachable): since when, the net::ERR code, the raw message. Skipped until a restart or a passing connection check. */
+  connErrorSince?: number
+  connErrorCode?: string
+  connErrorMessage?: string
 }
 
 /** Result of a login check on one account. loggedIn null = couldn't tell (not running / page unreadable). */

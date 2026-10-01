@@ -59,6 +59,7 @@ export const DEFAULT_NOTIFY: NotifySettings = {
   autoRetry: false,
   creditsOut: true,
   loggedOut: true,
+  connectionError: true,
 }
 
 export const DEFAULT_CONFIG: AppConfig = {

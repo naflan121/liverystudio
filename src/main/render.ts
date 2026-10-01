@@ -11,7 +11,7 @@ import path from 'node:path'
 import { getConfig, getRenderJobs, setRenderJobs } from './store'
 import { getEntry, getMeta, setMeta } from './db'
 import { notify } from './notify'
-import { listInstances, startInstance, showInstance, waitUntilDrawn, getPage, forget, fillVideoPrompt, sendAndHandleBusy, waitForVideo, readLastReply, warmUp, assertLoggedIn, loginState, Cancelled, NoCreditsError, LoggedOutError, type CreditsInfo } from './dola/driver'
+import { listInstances, startInstance, showInstance, waitUntilDrawn, getPage, forget, fillVideoPrompt, sendAndHandleBusy, waitForVideo, readLastReply, warmUp, assertLoggedIn, loginState, restartInstance, probeConnection, connectionErrorCode, explainConnectionError, Cancelled, NoCreditsError, LoggedOutError, type CreditsInfo } from './dola/driver'
 import { resolveFallbackApi, downloadFile } from './dola/resolver'
 import type { RenderJob, RenderOverview, DolaInstanceInfo, LogLevel, QueuePause, InstanceUsage, LoginCheck } from '../shared/types'
 
@@ -262,6 +262,68 @@ export async function checkLogins(id?: number): Promise<LoginCheck[]> {
 export function resetLoginCount(id: number): void { usageOf(id).sinceLogin = 0; saveUsage(); save(); pump() }
 let lastLoginSweep = Date.now()
 
+// --- Connection errors (usually the account's proxy) -------------------------------------
+// net::ERR_INVALID_AUTH_CREDENTIALS & co: the account's browser can't reach Dola at all. WebView2
+// reads its proxy when the instance starts, so a proxy changed/replaced while it runs keeps failing
+// until a restart. The account is skipped until a restart or a passing connection check; its render
+// moves to another account without counting as a try. The Studio never changes proxies itself.
+// Persisted in meta 'dola_conn_error'.
+interface ConnErrRec { since: number; code: string; message: string }
+let connErr: Record<number, ConnErrRec> = {}
+function loadConnErr(): void { try { connErr = JSON.parse(getMeta('dola_conn_error') || '{}') } catch { connErr = {} } }
+function saveConnErr(): void { setMeta('dola_conn_error', JSON.stringify(connErr)) }
+const hasConnErr = (id: number): boolean => !!connErr[id]
+
+/** Flag an account that can't connect (once). Returns true if it was new. */
+function markConnError(inst: { id: number; name: string }, code: string, message: string): boolean {
+  const fresh = !connErr[inst.id]
+  connErr[inst.id] = { since: connErr[inst.id]?.since ?? Date.now(), code, message: message.slice(0, 300) }
+  saveConnErr()
+  forget(inst.id)
+  return fresh
+}
+function clearConnError(inst: { id: number; name: string }): void {
+  if (!connErr[inst.id]) return
+  delete connErr[inst.id]
+  saveConnErr()
+  noAccountNotified = false
+  emitLog('ok', `${inst.name} reaches Dola again — back in the render rotation.`)
+}
+
+function onConnectionError(job: RenderJob, inst: { id: number; name: string }, code: string, message: string): void {
+  const fresh = markConnError(inst, code, message)
+  const why = explainConnectionError(code)
+  emitLog('warn', `${inst.name} can't connect to Dola — ${why} (${code}). Moving "${job.title}" to another account. Restart ${inst.name} on the Accounts screen to reload its proxy.`)
+  if (fresh) notify('connectionError', `${inst.name} can't connect to Dola`, `${why[0].toUpperCase()}${why.slice(1)} (${code}). "${job.title}" moved to another account. Restart it on Accounts.`, 'instances')
+  job.attempts = Math.max(0, job.attempts - 1) // the account's fault, not the job's
+  const earlier = job.chatUrl ? ` (earlier chat: ${job.chatUrl})` : ''
+  patch(job, { status: 'queued', chatUrl: undefined, sentAt: undefined, instanceId: undefined, instanceName: undefined, note: `${inst.name} couldn't connect (${code}); moved to another account${earlier}` })
+}
+
+/** Accounts → Check connection: open Dola's chat page on an idle account. Clears or (re)sets the connection-error state. */
+export async function checkConnection(id: number): Promise<{ ok: boolean; message?: string }> {
+  if (activeInstances.has(id)) throw new Error('A render is running on this account — the check would interrupt it.')
+  const inst = (await listInstances()).find((i) => i.id === id)
+  if (!inst) throw new Error(`No Dola instance with id ${id}.`)
+  if (!inst.isInitialized) throw new Error(`${inst.name} is not running — Start or Restart it first.`)
+  const { page } = await getPage(id)
+  const err = await probeConnection(page)
+  if (!err) { clearConnError(inst); save(); pump(); return { ok: true } }
+  const code = connectionErrorCode(err)
+  if (code) markConnError(inst, code, err)
+  save()
+  return { ok: false, message: err }
+}
+
+/** Accounts → Restart account: stop + start (reloads its proxy settings), then check the connection. */
+export async function restartAccount(id: number): Promise<{ ok: boolean; message?: string }> {
+  if (activeInstances.has(id)) throw new Error('A render is running on this account — wait for it or cancel it first.')
+  const name = (await listInstances()).find((i) => i.id === id)?.name ?? `Instance ${id}`
+  emitLog('info', `Restarting ${name} so it reloads its proxy settings…`)
+  await restartInstance(id)
+  return checkConnection(id)
+}
+
 // Called once per finished render (the AI pre-check hooks in here).
 let onRenderDone: (job: RenderJob) => void = () => { /* set by index.ts */ }
 export function setOnRenderDone(fn: (job: RenderJob) => void): void { onRenderDone = fn }
@@ -283,6 +345,7 @@ export function initRenderQueue(log: Emit, change: OnChange, refs?: (job: Render
   loadCooldown()
   loadUsage()
   loadLoggedOut()
+  loadConnErr()
   // Anything mid-flight when the app last closed: resume waiting if it was already
   // sent (chatUrl known), otherwise put it back in the queue from scratch.
   let resumed = 0, requeued = 0
@@ -320,6 +383,7 @@ export async function overview(): Promise<RenderOverview> {
       sinceLogin: usage[i.id]?.sinceLogin ?? 0,
       logoutsAfter: usage[i.id]?.logoutsAfter,
       loginCapReached: loginCapReached(i.id) || undefined,
+      ...(connErr[i.id] ? { connErrorSince: connErr[i.id].since, connErrorCode: connErr[i.id].code, connErrorMessage: connErr[i.id].message } : {}),
     }))
     return { ...base, instances }
   } catch (e: any) {
@@ -446,7 +510,12 @@ export function actOnJob(jobId: string, action: JobAction, cooldownMinutes = 0):
 }
 
 /** Instance manager: start a stopped account / bring one on screen in DolaMultiBrowser. */
-export async function startAccount(id: number): Promise<void> { await startInstance(id); save() }
+export async function startAccount(id: number): Promise<void> {
+  await startInstance(id)
+  // A fresh start reloads the proxy — re-check an account that couldn't connect before.
+  if (connErr[id]) await checkConnection(id).catch(() => { /* stays flagged */ })
+  save()
+}
 export async function showAccount(id: number): Promise<void> { await showInstance(id) }
 
 /** Clear a cooldown early (Renders → instances). */
@@ -471,7 +540,7 @@ async function pickInstance(job: RenderJob): Promise<{ id: number; name: string;
     return activeInstances.has(inst.id) ? null : inst
   }
   const skip = new Set([...cfg.excludeInstances, ...job.tried.filter((id) => !(creditsOut[id] && !outOfCredits(id)))])
-  const free = all.filter((i) => !skip.has(i.id) && !activeInstances.has(i.id) && (cooldown.get(i.id) ?? 0) < Date.now() && !outOfCredits(i.id) && !limitReached(i.id) && !isLoggedOut(i.id) && !loginCapReached(i.id))
+  const free = all.filter((i) => !skip.has(i.id) && !activeInstances.has(i.id) && (cooldown.get(i.id) ?? 0) < Date.now() && !outOfCredits(i.id) && !limitReached(i.id) && !isLoggedOut(i.id) && !loginCapReached(i.id) && !hasConnErr(i.id))
   if (cfg.pickStrategy === 'first') return free.find((i) => i.isInitialized) ?? (cfg.autoStartInstances ? free.find((i) => !i.isInitialized) : undefined) ?? null
   // Balanced: fewest renders today, then least recently used, then one that's already running.
   const pool = free.filter((i) => i.isInitialized || cfg.autoStartInstances)
@@ -492,8 +561,9 @@ async function pump(): Promise<void> {
       for (const job of [...jobs].reverse()) { // oldest first
         if (job.status !== 'queued') continue
         // Sent on an account Dola has since logged out: its chat is out of reach, so send again elsewhere.
-        if (job.chatUrl && job.instanceId != null && isLoggedOut(job.instanceId)) {
-          patch(job, { chatUrl: undefined, sentAt: undefined, instanceId: undefined, instanceName: undefined, note: `${job.instanceName || 'Its account'} was logged out of Dola; sending again on another account (earlier chat: ${job.chatUrl})` })
+        if (job.chatUrl && job.instanceId != null && (isLoggedOut(job.instanceId) || hasConnErr(job.instanceId))) {
+          const why = isLoggedOut(job.instanceId) ? 'was logged out of Dola' : "can't connect to Dola"
+          patch(job, { chatUrl: undefined, sentAt: undefined, instanceId: undefined, instanceName: undefined, note: `${job.instanceName || 'Its account'} ${why}; sending again on another account (earlier chat: ${job.chatUrl})` })
         }
         const resuming = !!job.chatUrl
         if (paused && !resuming) {
@@ -530,11 +600,12 @@ async function pump(): Promise<void> {
           // Nothing left but logged-out / login-limit accounts? Say what to do.
           const usable = (await listInstances().catch(() => [])).filter((i) => !cfg.excludeInstances.includes(i.id))
           const out = usable.filter((i) => isLoggedOut(i.id)).length, capped = usable.filter((i) => !isLoggedOut(i.id) && loginCapReached(i.id)).length
-          if (usable.length && (out || capped) && usable.every((i) => isLoggedOut(i.id) || loginCapReached(i.id) || outOfCredits(i.id) || limitReached(i.id))) {
-            const why = [out ? `${out} logged out of Dola` : '', capped ? `${capped} at the renders-per-login limit` : ''].filter(Boolean).join(', ')
-            const note = `No account can render right now (${why}) — log them in again, then Check login on Accounts`
+          const noConn = usable.filter((i) => !isLoggedOut(i.id) && hasConnErr(i.id)).length
+          if (usable.length && (out || capped || noConn) && usable.every((i) => isLoggedOut(i.id) || hasConnErr(i.id) || loginCapReached(i.id) || outOfCredits(i.id) || limitReached(i.id))) {
+            const why = [out ? `${out} logged out of Dola` : '', noConn ? `${noConn} can't connect (proxy)` : '', capped ? `${capped} at the renders-per-login limit` : ''].filter(Boolean).join(', ')
+            const note = `No account can render right now (${why}) — fix them on the Accounts screen`
             if (job.note !== note) patch(job, { note })
-            if (!noAccountNotified) { noAccountNotified = true; notify('loggedOut', 'No Dola account can render', `${why[0].toUpperCase()}${why.slice(1)}. Log them in again, then Check login on Accounts.`, 'instances') }
+            if (!noAccountNotified) { noAccountNotified = true; notify(out ? 'loggedOut' : 'connectionError', 'No Dola account can render', `${why[0].toUpperCase()}${why.slice(1)}. Fix them on the Accounts screen.`, 'instances') }
             continue
           }
         }
@@ -659,6 +730,8 @@ async function runJob(job: RenderJob, inst: { id: number; name: string; isInitia
     if (stale()) return // released by a forced Check action — the job has already moved on
     if (e instanceof NoCreditsError) { onNoCredits(job, inst, e.info); return }
     if (e instanceof LoggedOutError) { onLoggedOut(job, inst, e.reason); return }
+    const connCode = connectionErrorCode(e?.message)
+    if (connCode) { onConnectionError(job, inst, connCode, String(e?.message || e).split('\n')[0]); return }
     if (e instanceof Cancelled) {
       const action = pendingAction.get(job.id)
       if (action) { pendingAction.delete(job.id); cancelFlags.delete(job.id); applyAction(job, action, inst.id); return }

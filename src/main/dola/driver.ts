@@ -48,6 +48,24 @@ export type CancelCheck = () => boolean
 // Decided from what is on screen, never from the URL: after logging back in the page keeps
 // "?from_logout=1" in its address until it navigates, while already being logged in.
 export interface LoginState { loggedIn: boolean | null; reason: string }
+/**
+ * The account's browser can't reach Dola at all — almost always its proxy: rejected username/password
+ * (ERR_INVALID_AUTH_CREDENTIALS = HTTP 407), dead or replaced proxy, tunnel refused. WebView2 reads the
+ * proxy when the instance STARTS, so a proxy changed while it runs keeps failing until a restart.
+ * ERR_INTERNET_DISCONNECTED is left out on purpose: that's this PC's network, not one account.
+ */
+const CONNECTION_ERROR_RE = /net::(ERR_(?:INVALID_AUTH_CREDENTIALS|PROXY_[A-Z_]+|TUNNEL_CONNECTION_FAILED|SOCKS_CONNECTION_FAILED|NO_SUPPORTED_PROXIES|MANDATORY_PROXY_CONFIGURATION_FAILED|HTTPS_PROXY_TUNNEL_RESPONSE_REDIRECT|CONNECTION_REFUSED|CONNECTION_RESET|CONNECTION_CLOSED|CONNECTION_TIMED_OUT|EMPTY_RESPONSE|ADDRESS_UNREACHABLE))/
+/** The net::ERR_… code when an error means "this account can't connect", else null. */
+export function connectionErrorCode(message: string | null | undefined): string | null {
+  return CONNECTION_ERROR_RE.exec(message || '')?.[1] ?? null
+}
+/** Plain-words meaning of a connection error code. */
+export function explainConnectionError(code: string): string {
+  if (code === 'ERR_INVALID_AUTH_CREDENTIALS') return 'its proxy rejected the username/password'
+  if (/PROXY|TUNNEL|SOCKS/.test(code)) return 'its proxy refused or failed the connection'
+  return "it couldn't reach Dola (connection refused / reset / timed out)"
+}
+
 export class LoggedOutError extends Error {
   constructor(public account: string, public reason: string) { super(`Dola logged ${account} out (${reason}). Log in again on that account.`) }
 }
@@ -94,6 +112,14 @@ export const listInstances = async (): Promise<ControlInstance[]> => (await api<
 
 export async function startInstance(id: number): Promise<ControlInstance> {
   forget(id)
+  return api<ControlInstance>('POST', `/instances/${id}/start`)
+}
+
+/** Stop, wait until it's down, start again — WebView2 re-reads its proxy settings on start. */
+export async function restartInstance(id: number): Promise<ControlInstance> {
+  forget(id)
+  await api<ControlInstance>('POST', `/instances/${id}/stop`)
+  for (let i = 0; i < 30 && (await listInstances()).find((x) => x.id === id)?.isInitialized; i++) await new Promise((r) => setTimeout(r, 500))
   return api<ControlInstance>('POST', `/instances/${id}/start`)
 }
 
@@ -161,6 +187,8 @@ export function forget(id: number): void {
  * Logged out = a visible "Log In" button. Hard timeout so a frozen page can't hang the check.
  */
 export async function loginState(page: Page, timeoutMs = 10_000): Promise<LoginState> {
+  // A Chromium error page (proxy rejected, no connection) has no "Log In" button either — don't call that logged in.
+  if (/^chrome-error:/.test(page.url())) return { loggedIn: null, reason: 'the page shows a connection error, not Dola' }
   const read = page.evaluate(() => {
     const vis = (el: Element): boolean => !!((el as HTMLElement).offsetParent || el.getClientRects().length)
     const loginButton = Array.from(document.querySelectorAll('button, a, [role="button"]'))
@@ -178,6 +206,16 @@ export async function loginState(page: Page, timeoutMs = 10_000): Promise<LoginS
   } catch (e: any) {
     return { loggedIn: null, reason: `could not read the page: ${e?.message || e}` }
   } finally { clearTimeout(timer) }
+}
+
+/** Can this account's browser reach Dola? Opens the chat page; returns null when it loads, else the error message. Navigates — never use on a busy account. */
+export async function probeConnection(page: Page): Promise<string | null> {
+  try {
+    await page.goto(CHAT_URL, { waitUntil: 'domcontentloaded', timeout: 45_000 })
+    return null
+  } catch (e: any) {
+    return String(e?.message || e).split('\n')[0]
+  }
 }
 
 /** Throws LoggedOutError when the page shows Dola's "Log In" button. An unreadable page passes (other checks catch it). */

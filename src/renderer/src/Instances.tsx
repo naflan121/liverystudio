@@ -16,6 +16,7 @@ const hhmm = (ms: number): string => new Date(ms).toLocaleTimeString([], { hour:
 function stateOf(i: DolaInstanceInfo): { label: string; color: string } {
   if (i.excluded) return { label: 'Reserved', color: MUTE }
   if (i.busy) return { label: 'Rendering', color: INFO }
+  if (i.connErrorSince) return { label: `Can't connect · since ${hhmm(i.connErrorSince)}`, color: BAD }
   if (i.loggedOutSince) return { label: `Logged out · since ${hhmm(i.loggedOutSince)}`, color: BAD }
   if (i.creditsOutUntil) return { label: `No credits · back ${hhmm(i.creditsOutUntil)}`, color: WARN }
   if (i.cooldownUntil) return { label: `Cooling down · until ${hhmm(i.cooldownUntil)}`, color: WARN }
@@ -36,6 +37,20 @@ export function Instances({ config, onConfig }: { config: AppConfig; onConfig: (
   const [checks, setChecks] = useState<Record<number, LoginCheck>>({})
   const [checking, setChecking] = useState<number | 'all' | null>(null)
   const [checkMsg, setCheckMsg] = useState('')
+  const [connBusy, setConnBusy] = useState<number | null>(null)
+  const [connMsg, setConnMsg] = useState<Record<number, string>>({})
+  async function connAction(id: number, restart: boolean) {
+    setErr(''); setConnBusy(id)
+    setConnMsg((m) => ({ ...m, [id]: restart ? 'Restarting…' : 'Checking…' }))
+    try {
+      const r = restart ? await window.api.instanceRestart(id) : await window.api.instanceCheckConnection(id)
+      setConnMsg((m) => ({ ...m, [id]: r.ok ? '✓ reaches Dola' : `still failing: ${r.message || 'unknown error'}` }))
+      await refresh()
+    } catch (e: any) {
+      setConnMsg((m) => ({ ...m, [id]: String(e?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') }))
+    }
+    setConnBusy(null)
+  }
   const refresh = (): Promise<void> => window.api.renderOverview().then(setOv).catch((e) => setErr(String(e?.message || e)))
   useEffect(() => { refresh(); const t = setInterval(refresh, 5000); return () => clearInterval(t) }, [])
   const run = (p: Promise<unknown>): void => { setErr(''); p.then(refresh).catch((e: any) => setErr(String(e?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''))) }
@@ -59,8 +74,9 @@ export function Instances({ config, onConfig }: { config: AppConfig; onConfig: (
   const list = ov?.instances || []
   const active = list.filter((i) => !i.excluded)
   const todayTotal = list.reduce((n, i) => n + (i.sentToday || 0), 0)
-  const readyNow = active.filter((i) => !i.busy && !i.creditsOutUntil && !i.cooldownUntil && !i.limitReached && !i.loggedOutSince && !i.loginCapReached).length
+  const readyNow = active.filter((i) => !i.busy && !i.creditsOutUntil && !i.cooldownUntil && !i.limitReached && !i.loggedOutSince && !i.loginCapReached && !i.connErrorSince).length
   const loggedOutCount = active.filter((i) => i.loggedOutSince).length
+  const noConnCount = active.filter((i) => i.connErrorSince).length
   const maxToday = Math.max(1, ...list.map((i) => i.sentToday || 0))
 
   return (
@@ -75,7 +91,7 @@ export function Instances({ config, onConfig }: { config: AppConfig; onConfig: (
           <div style={card}>
             <div style={lbl}>Today</div>
             <div style={{ fontSize: 22, fontWeight: 700 }}>{ov ? `${ov.sentToday} / ${ov.dailyCap}` : '—'}</div>
-            <div style={{ fontSize: 12, color: MUTE }}>renders sent (overall daily cap) · {readyNow} of {active.length} account{active.length === 1 ? '' : 's'} ready now{loggedOutCount ? <span style={{ color: BAD }}> · {loggedOutCount} logged out</span> : null}</div>
+            <div style={{ fontSize: 12, color: MUTE }}>renders sent (overall daily cap) · {readyNow} of {active.length} account{active.length === 1 ? '' : 's'} ready now{loggedOutCount ? <span style={{ color: BAD }}> · {loggedOutCount} logged out</span> : null}{noConnCount ? <span style={{ color: BAD }}> · {noConnCount} can't connect</span> : null}</div>
           </div>
           <div style={card}>
             <div style={lbl}>Picking the account</div>
@@ -134,6 +150,8 @@ export function Instances({ config, onConfig }: { config: AppConfig; onConfig: (
                 <div style={{ minWidth: 0 }}>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: st.color, fontWeight: 600 }}><span style={{ width: 8, height: 8, borderRadius: '50%', background: st.color }} />{st.label}</span>
                   {i.currentJob && <div style={{ fontSize: 11.5, color: MUTE, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={i.currentJob}>{i.currentJob}</div>}
+                  {i.connErrorSince && <div style={{ fontSize: 11.5, color: MUTE }} title={i.connErrorMessage}>{i.connErrorCode === 'ERR_INVALID_AUTH_CREDENTIALS' ? 'Proxy rejected its username/password' : `Can't reach Dola (${i.connErrorCode})`} — Restart reloads its proxy; if it keeps failing, fix the proxy in DolaMultiBrowser.</div>}
+                  {connMsg[i.id] && <div style={{ fontSize: 11.5, color: connMsg[i.id].startsWith('✓') ? GOOD : MUTE, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={connMsg[i.id]}>{connMsg[i.id]}</div>}
                   {i.loggedOutSince && <div style={{ fontSize: 11.5, color: MUTE }}>Log in again in DolaMultiBrowser, then Check login.</div>}
                   {checks[i.id] && !i.loggedOutSince && <div style={{ fontSize: 11.5, color: checks[i.id].loggedIn === null ? WARN : MUTE }} title={checks[i.id].reason}>{checks[i.id].loggedIn === true ? '✓ logged in' : checks[i.id].loggedIn === null ? `couldn't tell: ${checks[i.id].reason}` : ''}</div>}
                 </div>
@@ -156,6 +174,8 @@ export function Instances({ config, onConfig }: { config: AppConfig; onConfig: (
                 <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                   {!i.isInitialized && <button onClick={() => run(window.api.instanceStart(i.id))} style={small}>Start</button>}
                   {i.isInitialized && <button onClick={() => run(window.api.instanceShow(i.id))} title="Bring this account on screen in DolaMultiBrowser" style={i.loggedOutSince ? { ...small, color: ACCENT, borderColor: ACCENT } : small}>{i.loggedOutSince ? 'Open to log in' : 'Show'}</button>}
+                  {i.connErrorSince && <button onClick={() => connAction(i.id, true)} disabled={connBusy !== null || i.busy} title="Stop and start this account so it reloads its proxy settings, then check it reaches Dola" style={{ ...small, color: ACCENT, borderColor: ACCENT }}>{connBusy === i.id ? 'Working…' : 'Restart account'}</button>}
+                  {i.connErrorSince && i.isInitialized && <button onClick={() => connAction(i.id, false)} disabled={connBusy !== null || i.busy} title="Open Dola's chat page on this account to see if it connects now" style={small}>Check connection</button>}
                   {i.isInitialized && <button onClick={() => checkLogin(i.id)} disabled={checking !== null} title="Is Dola logged in on this account? Reads the page as it is" style={small}>{checking === i.id ? 'Checking…' : 'Check login'}</button>}
                   {i.cooldownUntil && <button onClick={() => run(window.api.renderClearCooldown(i.id))} style={small}>End cooldown</button>}
                   {i.creditsOutUntil && <button onClick={() => run(window.api.instanceClearCredits(i.id))} title="Use if this account was topped up or Dola reset early" style={small}>End credit rest</button>}

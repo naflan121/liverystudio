@@ -59,6 +59,10 @@ const api = {
   instanceCheckLogin: (id?: number): Promise<LoginCheck[]> => ipcRenderer.invoke('instances:checkLogin', id),
   /** Start the renders-since-login count again. */
   instanceResetLoginCount: (id: number): Promise<boolean> => ipcRenderer.invoke('instances:resetLoginCount', id),
+  /** Open Dola's chat page on an idle account: ok clears its connection-error state. */
+  instanceCheckConnection: (id: number): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke('instances:checkConnection', id),
+  /** Stop + start an account (reloads its proxy settings), then check its connection. */
+  instanceRestart: (id: number): Promise<{ ok: boolean; message?: string }> => ipcRenderer.invoke('instances:restart', id),
   /** Reserve (never auto-render on) or release an account; returns the updated config. */
   instanceReserve: (id: number, on: boolean): Promise<AppConfig> => ipcRenderer.invoke('instances:reserve', id, on),
   /** fresh=false re-checks the job's existing Dola chat; fresh=true renders again from scratch. */

@@ -136,6 +136,16 @@ kind `loggedOut`. The same checks + warm-up live in dola-mcp (`dola_check_login`
 Not built: switching an account's proxy when Dola logs it out — that would work around Dola's own
 enforcement (see the no-anti-detection rule above). Logged-out accounts wait for the user to log in again.
 
+**Connection errors (`driver.ts` connectionErrorCode, `render.ts` "Connection errors").** `net::ERR_INVALID_AUTH_CREDENTIALS`
+(= the account's proxy answered 407: username/password rejected), `ERR_PROXY_*`, `ERR_TUNNEL_CONNECTION_FAILED`,
+connection refused/reset/timed out → the account "can't connect" (meta `dola_conn_error`): its render moves to another
+account without counting a try, the account is skipped, notification kind `connectionError`. WebView2 reads its proxy
+when the instance starts, so a proxy changed/replaced/rotated while it runs keeps failing until a restart: Accounts →
+**Restart account** (Control API stop + start, then `probeConnection`) or **Check connection** (opens the chat page;
+idle accounts only). Starting a flagged account re-checks it. `ERR_INTERNET_DISCONNECTED` is NOT per-account (this PC's
+network) and stays a normal failure. `loginState` returns "unknown" on a `chrome-error://` page so an error page is
+never mistaken for logged in. The Studio never changes an account's proxy.
+
 ## What the brain is (inherited from Livery Lab)
 
 **Livery Lab** — a self-learning Electron desktop app that generates
