@@ -63,7 +63,7 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
   const [c, setC] = useState<AppConfig>(() => ({
     ...config,
     review: { ...REVIEW_DEFAULTS, ...(config.review || {}) },
-    notify: { enabled: true, onlyWhenUnfocused: true, renderDone: true, renderFailed: true, capReached: true, queuePaused: true, autoRetry: false, creditsOut: true, ...(config.notify || {}) },
+    notify: { enabled: true, onlyWhenUnfocused: true, renderDone: true, renderFailed: true, capReached: true, queuePaused: true, autoRetry: false, creditsOut: true, loggedOut: true, ...(config.notify || {}) },
     render: { ...config.render, pauseAfterFailures: config.render?.pauseAfterFailures ?? 3, creditResetHour: config.render?.creditResetHour ?? 0 },
     ai: {
       minimax: { enabled: false, cliPath: '', dailyTokenLimit: 500000, ...(config.ai?.minimax || {}) },
@@ -730,7 +730,7 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
             </div>
             <Field label="What Dola receives">
               <pre style={{ margin: 0, fontSize: 11.5, color: MUTE, fontFamily: 'var(--f-mono)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: 'var(--surface-2)', border: `1px solid ${LINE}`, borderRadius: 9, padding: '9px 11px', lineHeight: 1.55 }}>
-                {[c.render.model, c.render.duration, c.render.aspect, 'NotifyHuman Artifacts', 'Dont ask me any more confirmation go ahead', '', ...(c.render.extraInstructions?.trim() ? [c.render.extraInstructions.trim(), ''] : []), ...(c.render.referenceImages ? [buildReferenceBlock([fillImage1(c.render.referenceImage1, 'Delta Air Lines Boeing 757-200'), '[scenario Image 2, if set]']), ''] : []), '[prompt]'].join('\n')}
+                {[...((c.render.warmup ?? true) ? [`[new chat → "${(c.render.warmupMessage ?? '').trim() || 'Hi'}" → wait for Dola's reply → Pro + Generate Videos in that chat]`, ''] : []), c.render.model, c.render.duration, c.render.aspect, 'NotifyHuman Artifacts', 'Dont ask me any more confirmation go ahead', '', ...(c.render.extraInstructions?.trim() ? [c.render.extraInstructions.trim(), ''] : []), ...(c.render.referenceImages ? [buildReferenceBlock([fillImage1(c.render.referenceImage1, 'Delta Air Lines Boeing 757-200'), '[scenario Image 2, if set]']), ''] : []), '[prompt]'].join('\n')}
               </pre>
             </Field>
             <Field label="Video folder">
@@ -811,6 +811,7 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
                 ['capReached', 'Daily cap reached', 'once a day'],
                 ['autoRetry', 'Automatic retry', 'after every take was rejected'],
                 ['creditsOut', 'Out of Dola credits', 'every account used its daily credits'],
+                ['loggedOut', 'Dola logged an account out', 'its render moved to another account — log it in again'],
               ] as const).map(([k, label, hint]) => (
                 <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13.5 }}>
                   <input type="checkbox" disabled={!c.notify.enabled} checked={c.notify[k]} onChange={(e) => setNotify({ [k]: e.target.checked })} style={{ width: 16, height: 16, accentColor: ACCENT }} />

@@ -328,8 +328,8 @@ export function Renders({ entries, jobs, onOpenEntry, onClose, onRefresh, refsDe
                       {ov.instances.map((i) => {
                         const back = i.creditsOutUntil ? new Date(i.creditsOutUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
                         const coolTo = i.cooldownUntil ? new Date(i.cooldownUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
-                        const state = i.excluded ? 'reserved' : i.busy ? 'rendering' : i.creditsOutUntil ? `no credits · back ${back}` : i.cooldownUntil ? `cooling down · until ${coolTo}` : i.isInitialized ? 'ready' : 'stopped'
-                        const color = i.excluded ? MUTE : i.busy ? INFO : i.creditsOutUntil ? 'var(--warn)' : i.cooldownUntil ? 'var(--warn)' : i.isInitialized ? GOOD : WAIT
+                        const state = i.excluded ? 'reserved' : i.busy ? 'rendering' : i.loggedOutSince ? 'logged out' : i.creditsOutUntil ? `no credits · back ${back}` : i.cooldownUntil ? `cooling down · until ${coolTo}` : i.isInitialized ? 'ready' : 'stopped'
+                        const color = i.excluded ? MUTE : i.busy ? INFO : i.loggedOutSince ? 'var(--bad)' : i.creditsOutUntil ? 'var(--warn)' : i.cooldownUntil ? 'var(--warn)' : i.isInitialized ? GOOD : WAIT
                         return (
                           <span key={i.id} title={`#${i.id} · ${i.status}${i.creditsOutUntil ? ` · out of Dola video credits${i.creditsNeed != null ? ` (needs ${i.creditsNeed}, had ${i.creditsLeft ?? 0})` : ''}` : ''}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${LINE}`, borderRadius: 20, padding: '4px 10px', fontSize: 12, opacity: i.excluded ? 0.6 : 1 }}>
                             <span style={{ width: 7, height: 7, borderRadius: '50%', background: color }} />
