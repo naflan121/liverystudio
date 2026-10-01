@@ -46,7 +46,7 @@ export const DEFAULT_REVIEW: ReviewSettings = REVIEW_DEFAULTS // shared so the r
 // coverage + reference naming on Haiku; MiniMax and the pre-check off until switched on.
 export const DEFAULT_AI: AiSettings = {
   minimax: { enabled: false, cliPath: '', dailyTokenLimit: 500000 },
-  routes: { title: 'claude:generation', caption: 'claude:generation', scene: 'claude:claude-haiku-4-5', refAircraft: 'claude:claude-haiku-4-5', dolaCheck: 'claude:claude-haiku-4-5' },
+  routes: { title: 'claude:generation', caption: 'claude:generation', scene: 'claude:claude-haiku-4-5', refAircraft: 'claude:claude-haiku-4-5', dolaCheck: 'claude:claude-haiku-4-5', brainAgent: 'minimax:MiniMax-M3' },
   precheck: { enabled: false, model: 'MiniMax-M3', auto: true },
 }
 
