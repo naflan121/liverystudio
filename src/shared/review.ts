@@ -87,6 +87,23 @@ export function parseLessonProposals(raw: string): { rule: string; category: str
   return out
 }
 
+/** Pull "at 0:06" / "at 6s" / "6 seconds in" out of a free-form comment so we can group failures
+ *  by moment. Returns null when nothing is found. Matches seconds (1-59) and m:ss forms. */
+export function parseFailedAtSeconds(comment: string): number | null {
+  const text = String(comment || '').trim()
+  if (!text) return null
+  // m:ss form: "at 0:06", "0:06 in", "0:06 — plane rolled"
+  const mss = text.match(/\b(\d{1,2}):([0-5]\d)\b/)
+  if (mss) {
+    const m = Number(mss[1]), s = Number(mss[2])
+    if (m < 5) return m * 60 + s
+  }
+  // "at 6s", "at 6 sec", "6s in", "6 seconds in", "around 6s"
+  const sec = text.match(/\b(\d{1,2}(?:\.\d+)?)\s*(?:s|sec|secs|seconds?)\b/i)
+  if (sec) return Math.min(Number(sec[1]), 300)
+  return null
+}
+
 /** Appended to the brain's generation message when render lessons are on. */
 export function renderLessonsBlock(lessons: string): string {
   return `\n\nRENDER LESSONS — rules learned from renders the reviewer rejected. Follow them while writing this prompt (they are about what the video model gets wrong, not about reach):\n${lessons.trim()}`

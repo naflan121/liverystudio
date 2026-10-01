@@ -13,7 +13,7 @@ import { getJob, updateJob, listJobs, submit } from './render'
 import { notify } from './notify'
 import { SYSTEM, longLimit } from '../shared/prompts'
 import { SCENARIOS } from '../shared/domain'
-import { RENDER_LESSONS_SYSTEM, buildRenderLessonMessage, buildFixPromptMessage, parseLessonProposals, reasonLabel } from '../shared/review'
+import { RENDER_LESSONS_SYSTEM, buildRenderLessonMessage, buildFixPromptMessage, parseLessonProposals, parseFailedAtSeconds, reasonLabel } from '../shared/review'
 import type { Entry, JobReview, LogLevel, RenderJob, ReviewVerdict } from '../shared/types'
 
 interface Deps {
@@ -74,7 +74,7 @@ function writeSidecarReview(file: string, review: JobReview | null): void {
   } catch { /* sidecar missing or unreadable — the DB is the record */ }
 }
 
-export function decide(jobId: string, verdict: ReviewVerdict, reasons: string[], comment: string, matchedLessonIds?: number[]): RenderJob {
+export function decide(jobId: string, verdict: ReviewVerdict, reasons: string[], comment: string, matchedLessonIds?: number[], failedAtSeconds?: number | null): RenderJob {
   const job = getJob(jobId)
   if (!job || job.status !== 'done' || !job.file) throw new Error('Only a finished render can be reviewed.')
   const at = new Date().toISOString()
@@ -84,7 +84,10 @@ export function decide(jobId: string, verdict: ReviewVerdict, reasons: string[],
   updateJob(job.id, { file, review })
   writeSidecarReview(file, review)
   const entry = getEntry(job.entryId)
-  insertReview({ jobId: job.id, entryId: job.entryId, verdict, reasons: review.reasons, comment: review.comment, scenarioId: entry?.scenarioId, instance: job.instanceName, at, precheck: job.precheck?.status === 'done' ? job.precheck.verdict : undefined })
+  // Parse "at 0:06" / "at 6s" from the comment so we can cluster failures by moment later. The
+  // reviewer's free-form text is the source — no separate UI for it.
+  const parsedSeconds = failedAtSeconds ?? (verdict === 'rejected' ? parseFailedAtSeconds(comment) : null)
+  insertReview({ jobId: job.id, entryId: job.entryId, verdict, reasons: review.reasons, comment: review.comment, scenarioId: entry?.scenarioId, instance: job.instanceName, at, precheck: job.precheck?.status === 'done' ? job.precheck.verdict : undefined, failedAtSeconds: parsedSeconds })
   deps.emitLog(verdict === 'rejected' ? 'warn' : verdict === 'approved' ? 'ok' : 'info', `${verdict === 'approved' ? 'Approved' : verdict === 'rejected' ? 'Rejected' : 'Skipped'}: "${job.title}"${review.reasons.length ? ` — ${review.reasons.map(reasonLabel).join(', ')}` : ''}`)
 
   if (verdict === 'rejected') {

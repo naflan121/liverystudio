@@ -98,6 +98,11 @@ const MIGRATIONS: string[] = [
    CREATE INDEX render_lessons_status ON render_lessons(status);
    CREATE INDEX render_lessons_confidence ON render_lessons(confidence);
    CREATE INDEX render_lessons_superseded ON render_lessons(superseded_by);`,
+  // v6 — scene-level failure tracking: when the reviewer writes e.g. "rolled inverted
+  // at 0:06", the regex parse extracts 6.0s into failed_at_seconds so the brain agent
+  // can cluster rejections by (reason, scenario, ~moment) and spot persistent
+  // failure points that span many clips.
+  `ALTER TABLE reviews ADD COLUMN failed_at_seconds REAL;`,
 ]
 
 export function dbPath(): string {
@@ -203,9 +208,9 @@ export function syncRenderJobs(jobs: RenderJob[]): void {
 
 // --- reviews ----------------------------------------------------------------------
 
-export function insertReview(r: { jobId: string; entryId: number; verdict: string; reasons: string[]; comment: string; scenarioId?: string; instance?: string; at: string; precheck?: string }): void {
-  getDb().prepare(`INSERT INTO reviews (job_id, entry_id, verdict, reasons, comment, scenario_id, instance, reviewed_at, precheck)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(r.jobId, r.entryId, r.verdict, JSON.stringify(r.reasons), r.comment, r.scenarioId ?? null, r.instance ?? null, r.at, r.precheck ?? null)
+export function insertReview(r: { jobId: string; entryId: number; verdict: string; reasons: string[]; comment: string; scenarioId?: string; instance?: string; at: string; precheck?: string; failedAtSeconds?: number | null }): void {
+  getDb().prepare(`INSERT INTO reviews (job_id, entry_id, verdict, reasons, comment, scenario_id, instance, reviewed_at, precheck, failed_at_seconds)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(r.jobId, r.entryId, r.verdict, JSON.stringify(r.reasons), r.comment, r.scenarioId ?? null, r.instance ?? null, r.at, r.precheck ?? null, r.failedAtSeconds ?? null)
 }
 
 /** How often the AI pre-check matched your approve/reject (live decisions only). */
@@ -236,6 +241,29 @@ export function reviewStatsByScenario(): ReviewStatRow[] {
 export function rejectReasonCounts(): { reason: string; n: number }[] {
   return getDb().prepare(`SELECT j.value reason, COUNT(*) n FROM reviews, json_each(reviews.reasons) j
     WHERE verdict = 'rejected' AND undone_at IS NULL GROUP BY j.value ORDER BY n DESC`).all() as { reason: string; n: number }[]
+}
+
+/** Rejections with a parsed failed_at_seconds — for the brain agent's per-moment clustering.
+ *  Bounded to the last `limit` rejections so we don't pull the entire reviews table. */
+export function recentRejectionsWithMoment(opts: { limit?: number } = {}): { jobId: string; entryId: number; scenarioId: string | null; reasons: string[]; failedAtSeconds: number | null; comment: string; at: string }[] {
+  const limit = Math.max(1, Math.min(opts.limit ?? 50, 200))
+  const rows = getDb().prepare(`SELECT job_id, entry_id, scenario_id, reasons, failed_at_seconds, comment, reviewed_at
+    FROM reviews WHERE verdict = 'rejected' AND undone_at IS NULL
+    ORDER BY reviewed_at DESC LIMIT ?`).all(limit) as { job_id: string; entry_id: number; scenario_id: string | null; reasons: string; failed_at_seconds: number | null; comment: string; reviewed_at: string }[]
+  return rows.map((r) => ({
+    jobId: r.job_id,
+    entryId: r.entry_id,
+    scenarioId: r.scenario_id,
+    reasons: safeParseArrayLocal(r.reasons),
+    failedAtSeconds: r.failed_at_seconds,
+    comment: r.comment,
+    at: r.reviewed_at,
+  }))
+}
+
+function safeParseArrayLocal(s: string | null): string[] {
+  if (!s) return []
+  try { const v = JSON.parse(s); return Array.isArray(v) ? v : [] } catch { return [] }
 }
 
 // --- render lessons (rejection-derived prompt-writing rules) -----------------------
