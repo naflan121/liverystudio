@@ -107,9 +107,12 @@ function noteGeneration(): void { lastGenerationAt = Date.now() }
  *  serialised individually, and nesting exclusive() here would deadlock the shared chain. */
 async function runBrainDigestNow(opts: { apply?: boolean; source?: 'manual' | 'reactive' | 'periodic' } = {}): Promise<BrainDigest> {
   if (brainDigestInFlight) {
-    // A digest is already queued or running. Don't stack a second one — return a no-op summary.
-    emitLog('info', 'Brain digest already running — skipping this trigger.')
-    return { health: { activeCount: 0, pendingCount: 0, dismissedCount: 0, staleCandidates: [] }, newLessons: [], strengthenOrDismiss: [], missedCombos: [], clusters: [], summary: 'A brain digest is already running.' }
+    // A digest is already queued or running. Don't stack a second one — each run is a full
+    // audit + consolidate pair of model calls. Return the *existing* digest so the manual click
+    // shows real content rather than a fabricated empty card.
+    emitLog('info', 'Brain digest already running — showing the current result.')
+    try { const raw = getMeta('last_brain_digest'); if (raw) return JSON.parse(raw) } catch { /* fall through */ }
+    return { health: { activeCount: 0, pendingCount: 0, dismissedCount: 0, staleCandidates: [] }, newLessons: [], strengthenOrDismiss: [], missedCombos: [], clusters: [], summary: 'A brain digest is already running — this will finish shortly.' }
   }
   brainDigestInFlight = true
   // Reset the counter up front so rejections arriving during this run don't push it past the
@@ -759,7 +762,8 @@ function registerIpc(): void {
   ipcMain.handle('review:rewrite', (_e, entryId: number) => rewriteAndRender(entryId))
   ipcMain.handle('review:unusable', (_e, entryId: number) => { markUnusable(entryId); return true })
   ipcMain.handle('review:stats', () => ({ scenarios: reviewStatsByScenario(), reasons: rejectReasonCounts() }))
-  ipcMain.handle('review:lessons:get', () => getRenderLessons())
+  // The exact lessons block a generation prompt would carry right now (debug / inspection).
+  ipcMain.handle('review:lessons:get', () => getRenderLessons(getConfig().review.lessonsBudget))
   ipcMain.handle('review:lessons:set', (_e, text: string) => { setRenderLessons(text); return true })
   ipcMain.handle('review:lessons:list', () => getAllRenderLessons())
   ipcMain.handle('review:lessons:approve', (_e, id: number) => { approveRenderLesson(id); return true })
@@ -853,7 +857,13 @@ if (!gotLock) {
     // Brain agent nightly maintenance. installBrainPeriodic() is also re-run whenever the
     // user changes the cadence in Settings, so the timer always matches the saved value.
     setTimeout(() => {
-      if (getConfig().ai.brainAgent?.autoPeriodic) runBrainDigestNow({ source: 'periodic' }).catch((e) => emitLog('warn', `Brain digest failed: ${e?.message || e}`))
+      const cfg = getConfig()
+      // Both gates matter: autoPeriodic is the user's "run it for me" switch, and minimax.enabled
+      // is whether the engine exists at all. Without the second check every launch with the
+      // default config (autoPeriodic on, MiniMax off) would fire two doomed CLI calls.
+      if (cfg.ai.brainAgent?.autoPeriodic && cfg.ai.minimax.enabled) {
+        runBrainDigestNow({ source: 'periodic' }).catch((e) => emitLog('warn', `Brain digest failed: ${e?.message || e}`))
+      }
     }, 5 * 60_000) // first one 5 min after start
     installBrainPeriodic()
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })

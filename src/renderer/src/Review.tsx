@@ -74,14 +74,13 @@ export function Review({ entries, jobs, onOpenEntry, onClose }: {
   // ticked here, so hiding it would make the >=2-matches promotion path unreachable.
   const refreshLessons = useCallback(() => {
     window.api.listRenderLessons().then((all) => {
-      const candidates = (all || []).filter((r: any) => r.status === 'approved' || r.status === 'pending')
-      // Active rules first, then fresh ones the reviewer hasn't seen yet.
-      candidates.sort((a: any, b: any) => {
-        const av = a.status === 'approved' ? 1e6 - a.id : (a.confidence === 'medium' || a.confidence === 'high' ? 1e3 - a.id : -a.id)
-        const bv = b.status === 'approved' ? 1e6 - b.id : (b.confidence === 'medium' || b.confidence === 'high' ? 1e3 - b.id : -b.id)
-        return bv - av
-      })
-      setActiveLessons(candidates.slice(0, 12))
+      const rows: any[] = (all || []).filter((r: any) => r.status === 'approved' || r.status === 'pending')
+      const rank = (r: any): number => (r.status === 'approved' ? 3 : r.confidence === 'medium' || r.confidence === 'high' ? 2 : 1)
+      const active = rows.filter((r: any) => rank(r) >= 2).sort((a: any, b: any) => rank(b) - rank(a) || b.uses - a.uses || b.id - a.id)
+      // Fresh rules are reserved their own slots so a long list of established rules can never
+      // hide the one a reviewer needs to tick in order to promote it.
+      const fresh = rows.filter((r: any) => rank(r) === 1).sort((a: any, b: any) => b.id - a.id)
+      setActiveLessons([...active.slice(0, 9), ...fresh.slice(0, 3)])
     }).catch(() => { /* ignore */ })
   }, [])
   useEffect(() => { refreshLessons() }, [refreshLessons])

@@ -5,7 +5,7 @@ import type { AppConfig, Entry, LearningLogEntry, RenderJob, RenderSettings, Rev
 import {
   getDb, migrateFromJson, backupDb, loadEntries, getEntry, upsertEntries, countEntries, clearEntries,
   loadRenderJobs, syncRenderJobs,
-  listActiveLessons, listAllLessons, insertLessonsBulk, replaceAllLessons, approveLesson, dismissLesson, formatLessonsBlock, formatLessonsForEditing, seedRenderLessonsFromFile, parseLessonsMarkdown, bumpLessonUses, type RenderLessonRow,
+  listActiveLessons, listAllLessons, replaceAllLessons, approveLesson, dismissLesson, formatLessonsBlock, formatLessonsForEditing, seedRenderLessonsFromFile, parseLessonsMarkdown, bumpLessonUses, type RenderLessonRow,
 } from './db'
 import { REVIEW_DEFAULTS } from '../shared/review'
 import { REFERENCE_IMAGE1_DEFAULT } from '../shared/references'

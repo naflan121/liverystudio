@@ -8,7 +8,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "package:win": "electron-vite build && electron-packager . \"Livery Studio\" --platform=win32 --arch=x64 --out=release --overwrite --app-version=0.2.0 --ignore=\"(^/src|^/release|\\.md$|electron-builder\\.yml|tsconfig|electron\\.vite)\"",
+    "package:win": "electron-vite build && electron-packager . \"Livery Studio\" --platform=win32 --arch=x64 --out=release --overwrite --app-version=0.2.0 --ignore=\"(^/src|^/release|^/scripts|^/output|\\.md$|electron-builder\\.yml|tsconfig|electron\\.vite)\"",
     "postinstall": "electron-rebuild -f -w better-sqlite3"
   },
   "dependencies": {

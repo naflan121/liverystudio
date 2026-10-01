@@ -70,19 +70,22 @@ export function buildRenderLessonMessage(o: {
 /** Pull the first balanced JSON value out of a model response. Models often wrap JSON in a
  *  preamble ("Sure! Here you go:") or trailing chatter, and the old prose-based pipeline was
  *  immune to that — so a bare JSON.parse here would silently throw away the whole learning step.
- *  Handles: bare JSON, ```json fences, and prose-wrapped JSON. Returns null when nothing parses. */
+ *  Handles: bare JSON, ```json fences, and prose-wrapped JSON. When several JSON values are
+ *  present (e.g. the model echoing the schema's own example first), the LAST one wins, because
+ *  the echo always precedes the real answer. Returns null when nothing parses. */
 export function extractJson(raw: string): any | null {
   const text = String(raw || '').trim()
   if (!text) return null
   const unfenced = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
   // Fast path: the whole thing is valid JSON.
   try { return JSON.parse(unfenced) } catch { /* fall through to extraction */ }
-  // Find the first [ or { and scan for its matching close, respecting strings and escapes.
-  for (let i = 0; i < unfenced.length; i++) {
+  const found: any[] = []
+  let i = 0
+  while (i < unfenced.length) {
     const ch = unfenced[i]
-    if (ch !== '[' && ch !== '{') continue
+    if (ch !== '[' && ch !== '{') { i++; continue }
     const open = ch, close = ch === '[' ? ']' : '}'
-    let depth = 0, inStr = false, esc = false
+    let depth = 0, inStr = false, esc = false, end = -1
     for (let j = i; j < unfenced.length; j++) {
       const c = unfenced[j]
       if (esc) { esc = false; continue }
@@ -92,13 +95,15 @@ export function extractJson(raw: string): any | null {
       if (c === open) depth++
       else if (c === close) {
         depth--
-        if (depth === 0) {
-          try { return JSON.parse(unfenced.slice(i, j + 1)) } catch { break }
-        }
+        if (depth === 0) { end = j; break }
       }
     }
+    if (end === -1) { i++; continue }
+    try { found.push(JSON.parse(unfenced.slice(i, end + 1))) } catch { /* not valid, keep scanning */ }
+    // Skip past the whole value so values nested inside it aren't re-parsed as candidates.
+    i = end + 1
   }
-  return null
+  return found.length ? found[found.length - 1] : null
 }
 
 /** Parse Claude's JSON output back into rule rows. Tolerates preambles, fences and truncation. */
@@ -117,27 +122,25 @@ export function parseLessonProposals(raw: string): { rule: string; category: str
   return out
 }
 
-/** Pull "at 0:06" / "at 6s" / "6 seconds in" out of a free-form comment so we can group failures
- *  by moment. Returns null when nothing is found.
- *  These are 15-second clips, so an m:ss timestamp is only a video moment when the minutes are 0
- *  or a strong video cue ("rolled", "at 6 seconds", "fails") sits next to it. A bare "at 1:23"
- *  is treated as a wall-clock time, not a moment — otherwise it would pollute the clusters. */
+/** These are 15-second clips. A reviewer almost always means a moment inside the clip, so an
+ *  m:ss timestamp is only accepted when it plausibly falls inside one — which rejects wall-clock
+ *  times like "at 1:23" and durations like "4:30 seconds". Returns null when nothing is found. */
+export const MAX_VIDEO_SECONDS = 60
+
 export function parseFailedAtSeconds(comment: string): number | null {
   const text = String(comment || '').trim()
   if (!text) return null
+  // m:ss — "at 0:06", "0:06 in". Checked first because "4:30 seconds" also matches the bare
+  // seconds pattern below on its ":30" tail, and the m:ss reading is the correct one.
   const mss = text.match(/\b(\d{1,2}):([0-5]\d)\b/)
   if (mss) {
-    const m = Number(mss[1]), s = Number(mss[2])
-    if (m === 0) return s // unambiguous: short-form clips never reach 1:00
-    if (m < 5) {
-      const around = text.slice(Math.max(0, mss.index! - 16), mss.index! + mss[0].length + 16)
-      // Strong cues only — "at"/"in"/"around" on their own are too common to disambiguate.
-      if (/\b(sec|seconds?|rolled|flips?|flipped|broke|broken|fails?|failed|starts?|begins?|cuts?)\b/i.test(around)) return m * 60 + s
-    }
+    const total = Number(mss[1]) * 60 + Number(mss[2])
+    if (total <= MAX_VIDEO_SECONDS) return total
+    return null
   }
-  // "at 6s", "at 6 sec", "6s in", "6 seconds in"
+  // "at 6s", "at 6 sec", "6 seconds in"
   const sec = text.match(/\b(\d{1,3}(?:\.\d+)?)\s*(?:s|sec|secs|seconds?)\b/i)
-  if (sec) return Math.min(Number(sec[1]), 300)
+  if (sec && Number(sec[1]) <= MAX_VIDEO_SECONDS) return Number(sec[1])
   return null
 }
 

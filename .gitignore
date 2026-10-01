@@ -2,6 +2,8 @@ node_modules/
 out/
 release/
 dist/
+output/
+scripts/_verify.mjs
 *.log
 .DS_Store
 desktop.ini
