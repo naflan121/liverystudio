@@ -316,8 +316,10 @@ export function insertLesson(l: {
   return Number(r.lastInsertRowid)
 }
 
-/** Bulk insert (used by the one-time import of render-lessons.md). */
-export function insertLessonsBulk(rows: { rule: string; category: string | null; createdAt: string; importedFrom: string }[]): void {
+/** Bulk insert (used by the one-time import of render-lessons.md, and by the Settings
+ *  paste-replace). Wraps its own transaction so callers never nest one. New rows always land as
+ *  pending/low — the operator approves them, or the rejection flow confirms them twice. */
+export function insertLessonsBulk(rows: { rule: string; category: string | null; createdAt: string; importedFrom: string | null }[]): void {
   if (!rows.length) return
   const d = getDb()
   const stmt = d.prepare(`INSERT INTO render_lessons (created_at, rule, category, confidence, status, imported_from) VALUES (?, ?, ?, 'low', 'pending', ?)`)
@@ -326,19 +328,30 @@ export function insertLessonsBulk(rows: { rule: string; category: string | null;
   })()
 }
 
+/** Replace every lesson with `rows`, in one transaction. Used by the Settings clean-slate paste. */
+export function replaceAllLessons(rows: { rule: string; category: string | null; createdAt: string }[]): void {
+  const d = getDb()
+  const del = d.prepare(`DELETE FROM render_lessons`)
+  const ins = d.prepare(`INSERT INTO render_lessons (created_at, rule, category, confidence, status, imported_from) VALUES (?, ?, ?, 'low', 'pending', NULL)`)
+  d.transaction(() => {
+    del.run()
+    for (const r of rows) ins.run(r.createdAt, r.rule.trim(), r.category)
+  })()
+}
+
 export function getLesson(id: number): RenderLessonRow | null {
   const r = getDb().prepare('SELECT * FROM render_lessons WHERE id = ?').get(id) as any
   return r ? rowToLesson(r) : null
 }
-
-/** Active = approved or medium+ confidence pending (low-confidence pending is hidden until it's repeated or approved).
- *  Optional filter narrows to lessons with at least one matching scenario reason. */
+/** Active = approved, or a pending rule that has earned trust. Note the ORDER BY uses a CASE
+ *  rank, not a plain string compare: lexically 'medium' > 'low' > 'high', which is the wrong
+ *  priority. formatLessonsBlock re-sorts anyway, but keep this correct for direct callers. */
 export function listActiveLessons(): RenderLessonRow[] {
   return (getDb().prepare(`SELECT * FROM render_lessons
-    WHERE status IN ('approved')
+    WHERE status = 'approved'
        OR (status = 'pending' AND confidence IN ('medium', 'high'))
        OR (status = 'pending' AND confidence = 'low' AND matched_uses >= 2)
-    ORDER BY confidence DESC, uses DESC, id DESC`).all() as any[]).map(rowToLesson)
+    ORDER BY CASE confidence WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC, uses DESC, id DESC`).all() as any[]).map(rowToLesson)
 }
 
 /** Every lesson the operator can act on in the Settings UI, newest first. */
@@ -394,7 +407,12 @@ export function formatLessonsBlock(rows: RenderLessonRow[], budget = 1500): { te
   for (const r of sorted) {
     const line = `- ${r.rule}\n`
     const catLine = `### ${r.category || 'General'}\n`
-    if (len + line.length + catLine.length > budget && out.length) { truncated = true; break }
+    // Hard cap: never let the first rule through regardless of how long it is, otherwise a
+    // single huge rule would blow the budget the user configured.
+    if (len + line.length + catLine.length > budget) {
+      if (out.length) truncated = true
+      break
+    }
     out.push({ cat: r.category || 'General', rule: r.rule, id: r.id })
     len += line.length + catLine.length
   }
@@ -414,6 +432,19 @@ export function formatLessonsBlock(rows: RenderLessonRow[], budget = 1500): { te
 
 function confidenceRank(c: LessonConfidence): number {
   return c === 'high' ? 3 : c === 'medium' ? 2 : 1
+}
+
+/** Plain, round-trippable text of every live rule (grouped by category, bulleted) — the
+ *  paste-replace editor's content. Deliberately NOT the prompt block: that carries a header
+ *  line which would be parsed back as a rule. */
+export function formatLessonsForEditing(rows: RenderLessonRow[]): string {
+  const groups = new Map<string, string[]>()
+  for (const r of rows) {
+    const k = r.category || 'General'
+    const arr = groups.get(k) || groups.set(k, []).get(k)!
+    arr.push(`- ${r.rule}`)
+  }
+  return [...groups.entries()].map(([cat, lines]) => `### ${cat}\n${lines.join('\n')}`).join('\n\n')
 }
 
 function rowToLesson(r: any): RenderLessonRow {

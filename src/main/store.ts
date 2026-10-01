@@ -1,11 +1,11 @@
-import { app } from 'electron'
+﻿import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { AppConfig, Entry, LearningLogEntry, RenderJob, RenderSettings, ReviewSettings, NotifySettings, AiSettings, SavedConcept } from '../shared/types'
 import {
   getDb, migrateFromJson, backupDb, loadEntries, getEntry, upsertEntries, countEntries, clearEntries,
   loadRenderJobs, syncRenderJobs,
-  listActiveLessons, listAllLessons, insertLessonsBulk, approveLesson, dismissLesson, formatLessonsBlock, seedRenderLessonsFromFile, bumpLessonUses, recordLessonMatches, type RenderLessonRow,
+  listActiveLessons, listAllLessons, insertLessonsBulk, replaceAllLessons, approveLesson, dismissLesson, formatLessonsBlock, formatLessonsForEditing, seedRenderLessonsFromFile, parseLessonsMarkdown, bumpLessonUses, type RenderLessonRow,
 } from './db'
 import { REVIEW_DEFAULTS } from '../shared/review'
 import { REFERENCE_IMAGE1_DEFAULT } from '../shared/references'
@@ -64,6 +64,7 @@ export const DEFAULT_NOTIFY: NotifySettings = {
   creditsOut: true,
   loggedOut: true,
   connectionError: true,
+  brainDigest: true,
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -294,6 +295,7 @@ export function setConfig(patch: Partial<AppConfig>): AppConfig {
     minimax: { ...cur.ai.minimax, ...(patch.ai.minimax || {}) },
     routes: { ...cur.ai.routes, ...(patch.ai.routes || {}) },
     precheck: { ...cur.ai.precheck, ...(patch.ai.precheck || {}) },
+    brainAgent: { ...cur.ai.brainAgent, ...(patch.ai.brainAgent || {}) },
   }
   writeJson(p('config.json'), next)
   return next
@@ -408,6 +410,11 @@ export function getRenderLessonsWithIds(budget?: number): { text: string; ids: n
   } catch { return { text: '', ids: [] } }
 }
 
+/** Every live rule as plain editable text (no prompt header) for the Settings paste-replace box. */
+export function editRenderLessons(): string {
+  try { return formatLessonsForEditing(listActiveLessons()) } catch { return '' }
+}
+
 /** All lessons the operator can act on (pending + approved + dismissed), newest first. */
 export function getAllRenderLessons(): RenderLessonRow[] {
   try { return listAllLessons() } catch { return [] }
@@ -416,32 +423,14 @@ export function getAllRenderLessons(): RenderLessonRow[] {
 export function approveRenderLesson(id: number): void { approveLesson(id) }
 export function dismissRenderLesson(id: number, reason: string): void { dismissLesson(id, reason) }
 export function bumpRenderLessonUses(ids: number[]): void { bumpLessonUses(ids) }
-export function recordRenderLessonMatches(ids: number[]): void { recordLessonMatches(ids) }
 
-/** Replace every non-imported lesson with these (used by "Reset all rules"). The Settings UI manages
- *  individual rows; this is the escape hatch for paste-replace. Pending rows from past sessions are cleared. */
+/** Replace EVERY lesson (including the ones imported from the legacy markdown) with the text pasted
+ *  in Settings. This is the deliberate clean-slate escape hatch, so it wipes imported rows too —
+ *  otherwise a corrected paste would silently duplicate the seeded rules.
+ *  New rows are inserted as pending/low: they only enter prompts once the operator approves them
+ *  (or the rejection flow confirms them twice), which is the same rule everything else follows. */
 export function setRenderLessons(text: string): void {
-  const d = getDb()
-  d.prepare(`DELETE FROM render_lessons WHERE imported_from IS NULL`).run()
-  const parsed = parseLessonsMarkdownText(text)
-  if (!parsed.length) return
-  insertLessonsBulk(parsed.map((r: { rule: string; category: string | null }) => ({ ...r, createdAt: new Date().toISOString(), importedFrom: null })))
-}
-
-/** Mirror of parseLessonsMarkdown — kept here so the Settings "paste-replace" path doesn't pull db.ts internals. */
-function parseLessonsMarkdownText(text: string): { rule: string; category: string | null }[] {
-  const out: { rule: string; category: string | null }[] = []
-  let cat: string | null = null
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim()
-    if (!line) continue
-    const h = line.match(/^#{1,3}\s+(.+)$/)
-    if (h) { cat = h[1].trim(); continue }
-    const b = line.match(/^[-*+]\s+(.+)$/)
-    if (b) { out.push({ rule: b[1].trim(), category: cat }); continue }
-    out.push({ rule: line, category: cat || 'General' })
-  }
-  return out
+  replaceAllLessons(parseLessonsMarkdown(text).map((r: { rule: string; category: string | null }) => ({ ...r, createdAt: new Date().toISOString() })))
 }
 
 export function getTrends(): { text: string; updatedAt: string } {

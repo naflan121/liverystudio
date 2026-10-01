@@ -85,7 +85,7 @@ async function check(job: RenderJob): Promise<void> {
   const model = cfg.ai.precheck.model
   emitLog('step', `AI pre-check: ${model} is watching "${job.title}"…`)
   try {
-    const raw = await callMiniMax(buildPrecheckInput(job, cfg.review.useLessons ? getRenderLessons() : ''), {
+    const raw = await callMiniMax(buildPrecheckInput(job, cfg.review.useLessons ? getRenderLessons(cfg.review.lessonsBudget) : ''), {
       model, label: 'precheck', timeoutMs: 300_000, files: [job.file!], maxSteps: 2, onLog: emitLog as any,
     })
     const r = parsePrecheck(raw)

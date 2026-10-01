@@ -9,9 +9,9 @@ import { initPrecheck, queuePrecheck } from './precheck'
 import {
   getConfig, setConfig, getHistory, setHistory, getPlaybook, setPlaybook,
   getPlaybookVersions, appendLearningLog, getLearningLog, resetMemory, dataDir, setDataDir,
-  getTrends, setTrends, getSavedConcepts, DEFAULT_CONFIG, setSavedConcepts, importFromLiveryLab, liveryLabDataDir, pullNewFromLab, initStorage, backupStorage, getRenderLessons, setRenderLessons, getRenderLessonsWithIds, getAllRenderLessons, approveRenderLesson, dismissRenderLesson, bumpRenderLessonUses, recordRenderLessonMatches,
+  getTrends, setTrends, getSavedConcepts, DEFAULT_CONFIG, setSavedConcepts, importFromLiveryLab, liveryLabDataDir, pullNewFromLab, initStorage, backupStorage, getRenderLessons, setRenderLessons, getRenderLessonsWithIds, getAllRenderLessons, editRenderLessons, approveRenderLesson, dismissRenderLesson, bumpRenderLessonUses,
 } from './store'
-import { closeDb, reviewStatsByScenario, rejectReasonCounts, getEntry as getEntryById, insertUsage, usageSummary, precheckAgreement, formatLessonsBlock, recentRejectionsWithMoment, insertLesson } from './db'
+import { closeDb, reviewStatsByScenario, rejectReasonCounts, getEntry as getEntryById, insertUsage, usageSummary, precheckAgreement, formatLessonsBlock, recentRejectionsWithMoment, insertLesson, getMeta, setMeta, listActiveLessons } from './db'
 import { runBrainDigest, type BrainDigest, type LessonProposal } from './brainAgent'
 import { initReview, decide as reviewDecide, undo as reviewUndo, rewriteAndRender, rerender, markUnusable } from './review'
 import { varietyNote } from '../shared/variety'
@@ -95,45 +95,67 @@ let brainRejectionsSinceDigest = 0
 let lastBrainDigestAt = 0
 let lastGenerationAt = Date.now()
 let brainPeriodicHandle: NodeJS.Timeout | null = null
+/** Guards against stacking digests: the reactive trigger, the periodic tick and a manual click
+ *  can all fire at once, and each run is a full audit + consolidate model call. */
+let brainDigestInFlight = false
+/** Minimum gap between two digests, so a burst of rejections can't drain the token budget. */
+const BRAIN_MIN_GAP_MS = 30 * 60_000
 function noteGeneration(): void { lastGenerationAt = Date.now() }
 
-/** Run the brain digest: gather history + lessons + rejections, call runBrainDigest, toast the summary. */
+/** Run the brain digest: gather history + lessons + rejections, call runBrainDigest, toast the summary.
+ *  NOT wrapped in exclusive() by its callers' sake — the two model calls inside runBrainDigest are
+ *  serialised individually, and nesting exclusive() here would deadlock the shared chain. */
 async function runBrainDigestNow(opts: { apply?: boolean; source?: 'manual' | 'reactive' | 'periodic' } = {}): Promise<BrainDigest> {
-  const cfg = getConfig()
-  const history = getHistory()
-  const lessons = getAllRenderLessons()
-    .filter((r) => r.status === 'approved' || r.status === 'pending') // dismissed rules are out of scope
-    .map((r) => ({ id: r.id, rule: r.rule, category: r.category, confidence: r.confidence, uses: r.uses, matchedUses: r.matchedUses }))
-  const allRejections = recentRejectionsWithMoment({ limit: 80 })
-  const recentForAudit = allRejections.slice(0, 30).map((r) => ({ scenarioId: r.scenarioId, reasons: r.reasons, comment: r.comment }))
-  const digest = await exclusive(() => runBrainDigest(history, lessons, recentForAudit, allRejections, {
-    call: (modelSetting, message, o) => callModel(modelSetting, message, o),
-    getRoute: () => cfg.ai.routes.brainAgent || 'claude:claude-haiku-4-5',
-    emitLog: claudeLog,
-  }, cfg))
-  // Optionally apply the add-proposals as new pending rules. Operator still has to approve them.
-  if (opts.apply && digest.newLessons.length) {
-    const ids: number[] = []
-    for (const p of digest.newLessons) {
-      if (p.action !== 'add' || !p.rule) continue
-      ids.push(insertLesson({
-        rule: p.rule,
-        category: p.category,
-        confidence: p.confidence || 'low',
-        status: 'pending',
-      }))
-    }
-    if (ids.length) emitLog('ok', `Brain agent: added ${ids.length} candidate rule(s). Approve in Settings → Review to make them active.`)
+  if (brainDigestInFlight) {
+    // A digest is already queued or running. Don't stack a second one — return a no-op summary.
+    emitLog('info', 'Brain digest already running — skipping this trigger.')
+    return { health: { activeCount: 0, pendingCount: 0, dismissedCount: 0, staleCandidates: [] }, newLessons: [], strengthenOrDismiss: [], missedCombos: [], clusters: [], summary: 'A brain digest is already running.' }
   }
-  // Toast / renderer event with the summary
-  if (win && !win.isDestroyed()) win.webContents.send('brain:digest', { ...digest, source: opts.source || 'manual' })
-  if (digest.summary && digest.newLessons.length + digest.clusters.length + digest.missedCombos.length > 0) {
-    notify('brainDigest', 'Brain agent: digest ready', digest.summary, 'settings')
-  }
+  brainDigestInFlight = true
+  // Reset the counter up front so rejections arriving during this run don't push it past the
+  // threshold again and start a follow-up run immediately.
   brainRejectionsSinceDigest = 0
-  lastBrainDigestAt = Date.now()
-  emitLog('ok', `Brain digest (${opts.source || 'manual'}): ${digest.summary}`)
-  return digest
+  try {
+    const cfg = getConfig()
+    const history = getHistory()
+    const lessons = getAllRenderLessons()
+      .filter((r) => r.status === 'approved' || r.status === 'pending') // dismissed rules are out of scope
+      .map((r) => ({ id: r.id, rule: r.rule, category: r.category, confidence: r.confidence, uses: r.uses, matchedUses: r.matchedUses }))
+    const allRejections = recentRejectionsWithMoment({ limit: 80 })
+    const recentForAudit = allRejections.slice(0, 30).map((r) => ({ scenarioId: r.scenarioId, reasons: r.reasons, comment: r.comment }))
+    const digest = await runBrainDigest(history, lessons, recentForAudit, allRejections, {
+      call: (modelSetting, message, o) => exclusive(() => callModel(modelSetting, message, o)),
+      getRoute: () => getConfig().ai.routes.brainAgent || 'claude:claude-haiku-4-5',
+      emitLog: claudeLog,
+    }, cfg)
+    // Optionally apply the add-proposals as new pending rules. Operator still has to approve them.
+    if (opts.apply && digest.newLessons.length) {
+      const ids: number[] = []
+      for (const p of digest.newLessons) {
+        if (p.action !== 'add' || !p.rule) continue
+        ids.push(insertLesson({
+          rule: p.rule,
+          category: p.category,
+          confidence: p.confidence || 'low',
+          status: 'pending',
+        }))
+      }
+      if (ids.length) emitLog('ok', `Brain agent: added ${ids.length} candidate rule(s). Approve in Settings → Review to make them active.`)
+    }
+    // Persist the last digest so the Today screen can show it even if the app restarts, and so
+    // the user doesn't lose the result while they were on another screen.
+    const summary = { ...digest, source: opts.source || 'manual', at: new Date().toISOString() }
+    try { setMeta('last_brain_digest', JSON.stringify(summary)) } catch { /* never break over a cache write */ }
+    if (win && !win.isDestroyed()) win.webContents.send('brain:digest', summary)
+    if (digest.newLessons.length + digest.clusters.length + digest.missedCombos.length > 0) {
+      notify('brainDigest', 'Brain agent: digest ready', digest.summary, 'today')
+    }
+    lastBrainDigestAt = Date.now()
+    emitLog('ok', `Brain digest (${opts.source || 'manual'}): ${digest.summary}`)
+    return digest
+  } finally {
+    brainDigestInFlight = false
+  }
 }
 
 /** Called from main/review.ts after every rejection — bumps the counter and fires the digest when ready. */
@@ -144,7 +166,26 @@ function onRejectionRecorded(): void {
   const threshold = Math.max(3, cfg.ai.brainAgent?.reactiveThreshold ?? BRAIN_REACTIVE_THRESHOLD)
   if (brainRejectionsSinceDigest < threshold) return
   if (Date.now() - lastGenerationAt < BRAIN_QUIET_MINUTES * 60_000) return // user is active, wait
+  // Minimum gap since the last digest, so a burst of rejections can't drain the token budget.
+  if (lastBrainDigestAt && Date.now() - lastBrainDigestAt < BRAIN_MIN_GAP_MS) { brainRejectionsSinceDigest = 0; return }
   runBrainDigestNow({ source: 'reactive' }).catch((e) => emitLog('warn', `Reactive brain digest failed: ${e?.message || e}`))
+}
+
+/** (Re)install the periodic digest timer using the current cadence. Called at startup and
+ *  whenever the user changes the cadence, so a Settings change takes effect without a restart. */
+function installBrainPeriodic(): void {
+  if (brainPeriodicHandle) { clearInterval(brainPeriodicHandle); brainPeriodicHandle = null }
+  const cfg = getConfig()
+  if (!cfg.ai.brainAgent?.autoPeriodic) return
+  const cadenceH = Math.max(6, cfg.ai.brainAgent.cadenceHours)
+  brainPeriodicHandle = setInterval(() => {
+    const c = getConfig()
+    if (!c.ai.minimax.enabled || !c.ai.brainAgent?.autoPeriodic) return
+    if (Date.now() - lastGenerationAt < 60 * 60_000) return
+    if (lastBrainDigestAt && Date.now() - lastBrainDigestAt < BRAIN_MIN_GAP_MS) return
+    runBrainDigestNow({ source: 'periodic' }).catch((e) => emitLog('warn', `Periodic brain digest failed: ${e?.message || e}`))
+  }, cadenceH * 60 * 60_000)
+  brainPeriodicHandle.unref?.()
 }
 
 function recentTitles(history: Entry[]): string[] {
@@ -334,7 +375,13 @@ function withVariety(message: string, req: GenerateRequest, history: Entry[]): s
 
 function registerIpc(): void {
   ipcMain.handle('config:get', () => getConfig())
-  ipcMain.handle('config:set', (_e, patch) => setConfig(patch))
+  ipcMain.handle('config:set', (_e, patch) => {
+    const next = setConfig(patch)
+    // The brain agent's timer is built from the saved cadence, so rebuild it when that
+    // changes — otherwise a Settings edit would only take effect after a restart.
+    if (patch?.ai?.brainAgent) installBrainPeriodic()
+    return next
+  })
   ipcMain.handle('history:get', () => getHistory())
   ipcMain.handle('history:set', (_e, entries: Entry[]) => { setHistory(entries); return true })
   ipcMain.handle('playbook:get', () => getPlaybook())
@@ -718,17 +765,21 @@ function registerIpc(): void {
   ipcMain.handle('review:lessons:approve', (_e, id: number) => { approveRenderLesson(id); return true })
   ipcMain.handle('review:lessons:dismiss', (_e, p: { id: number; reason: string }) => { dismissRenderLesson(p.id, p.reason); return true })
   ipcMain.handle('review:lessons:preview', () => {
-    const cfg = getConfig()
-    const rows = getAllRenderLessons().filter((r) => r.status === 'approved' || r.confidence !== 'low' || r.matchedUses >= 2)
-    return formatLessonsBlock(rows, cfg.review.lessonsBudget).text
+    // Reuse the exact gating the generation path uses (listActiveLessons), so the preview
+    // can't disagree with reality — a dismissed rule must not appear here.
+    return formatLessonsBlock(listActiveLessons(), getConfig().review.lessonsBudget).text
   })
+  ipcMain.handle('review:lessons:edit', () => editRenderLessons())
 
   // --- Livery Studio Phase 2+: brain agent -------------------------------------
   // Manual on-demand digest. Returns the full structured digest so the UI can show
   // proposed rules, clusters and recommendations. Optionally auto-applies the add
   // proposals as new pending rows (operator still has to approve to make them active).
-  ipcMain.handle('brain:digest', (_e, p: { apply?: boolean } = {}) => exclusive(() => runBrainDigestNow({ apply: !!p.apply, source: 'manual' })))
+  // NOTE: do not wrap this in exclusive() — runBrainDigestNow() already serialises each
+  // model call individually, and nesting exclusive() deadlocks the shared chain.
+  ipcMain.handle('brain:digest', (_e, p: { apply?: boolean } = {}) => runBrainDigestNow({ apply: !!p.apply, source: 'manual' }))
   ipcMain.handle('brain:apply', (_e, ids: number[]) => { for (const id of ids) approveRenderLesson(id); return true })
+  ipcMain.handle('brain:digest:last', () => { try { const raw = getMeta('last_brain_digest'); return raw ? JSON.parse(raw) : null } catch { return null } })
   ipcMain.handle('history:refresh', () => {
     const r = pullNewFromLab()
     emitLog(r.added ? 'ok' : 'info', r.added ? `Pulled ${r.added} new prompt(s) from Livery Lab.` : 'History refreshed — no new prompts in Livery Lab.')
@@ -799,25 +850,12 @@ if (!gotLock) {
     const snapshot = (): void => { backupStorage().catch((e) => emitLog('warn', `Database backup failed: ${e?.message || e}`)) }
     setTimeout(snapshot, 30_000)
     setInterval(snapshot, 12 * 60 * 60_000).unref?.()
-    // Brain agent nightly maintenance. Cadence is in hours (default every 2 days). Skipped when
-    // the user has generated in the last hour so it never fights active work. Token-cost is
-    // bounded by ai.minimax.dailyTokenLimit in callModel.
-    const brainPeriodic = (): void => {
-      const cfg = getConfig()
-      if (!cfg.ai.minimax.enabled) return
-      if (!cfg.ai.brainAgent?.autoPeriodic) return
-      if (Date.now() - lastGenerationAt < 60 * 60_000) return
-      runBrainDigestNow({ source: 'periodic' }).catch((e) => emitLog('warn', `Periodic brain digest failed: ${e?.message || e}`))
-    }
-    const installPeriodic = (): void => {
-      const cfg = getConfig()
-      const cadenceH = Math.max(6, cfg.ai.brainAgent?.cadenceHours ?? 48)
-      if (brainPeriodicHandle) clearInterval(brainPeriodicHandle)
-      brainPeriodicHandle = setInterval(brainPeriodic, cadenceH * 60 * 60_000)
-      brainPeriodicHandle.unref?.()
-    }
-    setTimeout(brainPeriodic, 5 * 60_000) // first one 5 min after start
-    installPeriodic()
+    // Brain agent nightly maintenance. installBrainPeriodic() is also re-run whenever the
+    // user changes the cadence in Settings, so the timer always matches the saved value.
+    setTimeout(() => {
+      if (getConfig().ai.brainAgent?.autoPeriodic) runBrainDigestNow({ source: 'periodic' }).catch((e) => emitLog('warn', `Brain digest failed: ${e?.message || e}`))
+    }, 5 * 60_000) // first one 5 min after start
+    installBrainPeriodic()
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
   })
 

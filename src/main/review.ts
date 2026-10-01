@@ -116,7 +116,7 @@ export function undo(jobId: string): RenderJob {
 }
 
 async function learnFromRejection(job: RenderJob, entry: Entry | undefined): Promise<void> {
-  const current = getRenderLessons()
+  const current = getRenderLessons(getConfig().review.lessonsBudget)
   deps.emitLog('step', 'Teaching render lessons from this rejection…')
   const raw = await deps.claude(buildRenderLessonMessage({
     current, prompt: job.prompt, instructions: job.instructions, scenario: entry?.scenario || '?',
@@ -194,7 +194,7 @@ export async function rewriteAndRender(entryId: number, auto = false): Promise<E
   const scenario = SCENARIOS.find((s) => s.id === entry.scenarioId)
   const charLimit = entry.longPrompt ? longLimit({ longPromptChars: cfg.longPromptChars }) : (scenario?.charBudget || cfg.charLimit)
   deps.emitLog('step', `Rewriting "${entry.title || entry.scenario}" to fix the rejected renders…`)
-  const text = (await deps.claude(buildFixPromptMessage({ prompt: entry.text, rejections, lessons: cfg.review.useLessons ? getRenderLessons() : '', charLimit }), { system: SYSTEM, label: 'fix-prompt' })).trim()
+  const text = (await deps.claude(buildFixPromptMessage({ prompt: entry.text, rejections, lessons: cfg.review.useLessons ? getRenderLessons(cfg.review.lessonsBudget) : '', charLimit }), { system: SYSTEM, label: 'fix-prompt' })).trim()
   if (!text) throw new Error('The rewrite came back empty.')
   if (text.length > charLimit) deps.emitLog('warn', `The rewritten prompt is ${text.length} chars (limit ${charLimit}).`)
   const now = Date.now()

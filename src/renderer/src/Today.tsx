@@ -79,6 +79,9 @@ export function Today({ entries, jobs, overview, onNav, onOpenEntry, onLineup }:
   const [digestBusy, setDigestBusy] = useState(false)
   const [digestErr, setDigestErr] = useState('')
   useEffect(() => window.api.onBrainDigest((d) => setDigest(d)), [])
+  // A reactive/periodic run may finish while the user is on another screen — restore the last
+  // digest on mount so the result isn't silently lost.
+  useEffect(() => { window.api.lastBrainDigest().then((d) => { if (d) setDigest(d) }).catch(() => { /* ignore */ }) }, [])
   async function runBrainAgent(apply: boolean) {
     setDigestBusy(true); setDigestErr('')
     try { const d = await window.api.brainDigest({ apply }); setDigest(d) }

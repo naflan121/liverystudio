@@ -11,7 +11,8 @@
 // destructive actions without an explicit confirmation.
 
 import type { Entry, AppConfig } from '../shared/types'
-import { clusterFailures, comboWinRates, recentVsBaseline, scenarioBaseline, winRateStatsWeighted } from '../shared/brain'
+import { extractJson } from '../shared/review'
+import { clusterFailures, comboWinRates, operatorFrequencyWeighted, scenarioBaseline } from '../shared/brain'
 
 export interface LessonProposal {
   action: 'add' | 'strengthen' | 'dismiss'
@@ -87,16 +88,20 @@ Output ONLY a JSON object, no markdown, no preamble:
 }`
 
 export async function auditLessons(
+  history: Entry[],
   lessons: { id: number; rule: string; category: string | null; confidence: string; uses: number; matchedUses: number }[],
   recentRejections: { scenarioId: string | null; reasons: string[]; comment: string }[],
   baseline: Record<string, { baselinePct: number; sampleSize: number }>,
   deps: BrainAgentDeps,
   cfg: AppConfig,
 ): Promise<LessonAuditResult> {
+  // `lessons` is already filtered by the caller to approved + pending (never dismissed), so:
+  //  - activeCount  = rules that would actually reach a prompt (approved, or pending+medium+)
+  //  - pendingCount = rules still waiting for trust (pending + low confidence)
   const health = {
-    activeCount: lessons.filter((l) => l.confidence === 'high' || l.uses > 0).length,
-    pendingCount: lessons.filter((l) => l.confidence === 'low' && l.uses === 0).length,
-    dismissedCount: 0, // filled by the IPC handler from the full list
+    activeCount: lessons.filter((l) => l.confidence === 'high' || l.confidence === 'medium').length,
+    pendingCount: lessons.filter((l) => l.confidence === 'low').length,
+    dismissedCount: 0, // dismissed rows are filtered out upstream; the UI reads this from the full list
     staleCandidates: lessons.filter((l) => l.matchedUses >= 3 && l.uses === 0).map((l) => l.id),
   }
   if (!lessons.length && !recentRejections.length) return { proposals: [], health }
@@ -107,7 +112,11 @@ export async function auditLessons(
     ? recentRejections.slice(0, 30).map((r) => `[${r.scenarioId || '?'}] reasons=${r.reasons.join('|')} comment="${r.comment.slice(0, 120)}"`).join('\n')
     : '(no recent rejections)'
   const baselineBlock = Object.entries(baseline).map(([k, v]) => `${k} baseline=${v.baselinePct}% (n=${v.sampleSize})`).join('\n') || '(no scored history yet)'
-  const msg = `CURRENT ACTIVE RULES:\n${lessonBlock}\n\nRECENT REJECTIONS (newest first, up to 30):\n${rejectBlock}\n\nPER-SCENARIO BASELINE:\n${baselineBlock}\n\nLessons size budget: ${cfg.review.lessonsBudget} chars. Be ruthless about duplicates.`
+  // Recency-weighted operator stats: a carrier that stopped working six months ago shouldn't
+  // be presented as an active pattern.
+  const ops = operatorFrequencyWeighted(history, { sampleSize: 30 })
+  const opBlock = ops.length ? ops.slice(0, 8).map((o) => `${o.label} (weighted ${o.count}, ${o.pct}%)`).join(', ') : '(no scored history yet)'
+  const msg = `CURRENT ACTIVE RULES:\n${lessonBlock}\n\nRECENT REJECTIONS (newest first, up to 30):\n${rejectBlock}\n\nPER-SCENARIO BASELINE:\n${baselineBlock}\n\nRECENT OPERATOR/AIRCRAFT FREQUENCY (recency-weighted):\n${opBlock}\n\nLessons size budget: ${cfg.review.lessonsBudget} chars. Be ruthless about duplicates.`
   try {
     deps.emitLog?.('step', `Brain agent auditing ${lessons.length} rule(s) against ${recentRejections.length} rejection(s)…`)
     const raw = await deps.call(deps.getRoute(), msg, { system: AUDIT_LESSONS_SYSTEM, label: 'brain-audit', timeoutMs: 240_000 })
@@ -120,9 +129,7 @@ export async function auditLessons(
 }
 
 function parseAuditProposals(raw: string): LessonProposal[] {
-  const text = String(raw || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
-  let obj: any
-  try { obj = JSON.parse(text) } catch { return [] }
+  const obj = extractJson(raw)
   if (!obj || !Array.isArray(obj.proposals)) return []
   const out: LessonProposal[] = []
   for (const p of obj.proposals.slice(0, 8)) {
@@ -131,14 +138,16 @@ function parseAuditProposals(raw: string): LessonProposal[] {
     if (!action) continue
     const reason = String(p.reason || '').trim().slice(0, 240)
     if (action === 'add') {
-      const rule = String(p.rule || '').trim()
+      if (typeof p.rule !== 'string') continue // an object here would render as "[object Object]"
+      const rule = p.rule.trim()
       if (!rule || rule.length > 400) continue
-      const category = p.category ? String(p.category).trim().slice(0, 60) || undefined : undefined
+      const category = typeof p.category === 'string' ? p.category.trim().slice(0, 60) || undefined : undefined
       const confidence = p.confidence === 'high' ? 'high' : p.confidence === 'medium' ? 'medium' : 'low'
       out.push({ action, rule, category, reason, confidence })
     } else {
-      const ref = Number(p.ref)
-      if (!Number.isFinite(ref)) continue
+      // Guard against null/undefined/"" all coercing to 0 via Number().
+      const ref = typeof p.ref === 'number' ? p.ref : Number.NaN
+      if (!Number.isFinite(ref) || ref <= 0) continue
       out.push({ action, ref, reason })
     }
   }
@@ -180,15 +189,15 @@ export async function consolidateRejections(
 }
 
 function parseConsolidateProposals(raw: string): Map<string, string> {
-  const text = String(raw || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
-  let obj: any
-  try { obj = JSON.parse(text) } catch { return new Map() }
+  const obj = extractJson(raw)
   if (!obj || !Array.isArray(obj.proposals)) return new Map()
   const out = new Map<string, string>()
   for (const p of obj.proposals) {
-    if (!p || !p.rule) continue
+    if (!p || typeof p.rule !== 'string') continue // guard against "[object Object]" in the UI
+    const rule = p.rule.trim()
+    if (!rule) continue
     const key = `${p.scenarioId || '?'}|${p.reason || ''}|${p.momentBucket || ''}`
-    out.set(key, String(p.rule).trim().slice(0, 400))
+    out.set(key, rule.slice(0, 400))
   }
   return out
 }
@@ -205,31 +214,33 @@ export function findMissedCombos(history: Entry[], top = 5): MissedCombo[] {
     if (h.scenario) scenarios.add(h.scenario)
     if (h.camera) cameras.add(h.camera || 'auto')
   }
+  // Computed once outside the loop — it only depends on history.
+  const baselines = scenarioBaseline(history)
   const out: MissedCombo[] = []
   for (const scenario of scenarios) {
     const winsByCam = comboWinRates(history, () => scenario, (h) => h.camera || 'auto')
     const scenarioTotal = winsByCam.reduce((a, c) => a + c.total, 0)
     if (scenarioTotal < 3) continue
-    const winningCams = new Set(winsByCam.filter((c) => c.pct >= 50 && c.total >= 2).map((c) => c.b))
-    if (!winningCams.size) continue
-    const allScored = winRateStatsWeighted(history, [{ title: 'tmp', key: () => scenario }]).flatMap((d) => d.rows)
+    const winningCams = winsByCam.filter((c) => c.pct >= 50 && c.total >= 2)
+    if (!winningCams.length) continue
     for (const camera of cameras) {
-      if (winningCams.has(camera)) continue
+      if (winningCams.some((c) => c.b === camera)) continue
       const tried = winsByCam.find((c) => c.b === camera)
       if (tried && tried.total >= 1) continue // already tried
-      const baseStats = scenarioBaseline(history)
-      const base = baseStats[scenario] || { baselinePct: 0, sampleSize: 0 }
+      const base = baselines[scenario] || { baselinePct: 0, sampleSize: 0 }
+      // Rank by how well the scenario already does, so the best untried combo surfaces first.
+      const bestPct = Math.max(...winningCams.map((c) => c.pct))
       out.push({
         scenario,
         camera,
-        wins: 0,
-        total: 0,
-        pct: 0,
-        rationale: `${scenario} has hit with cameras ${[...winningCams].join(', ')} (baseline ${base.baselinePct}% on ${base.sampleSize} clip(s)) but never tried "${camera}".`,
+        wins: winningCams[0].wins,
+        total: winningCams[0].total,
+        pct: bestPct,
+        rationale: `${scenario} hits ${bestPct}% with ${winningCams.map((c) => c.b).join(', ')} (baseline ${base.baselinePct}% on ${base.sampleSize} clip(s)) but "${camera}" was never tried.`,
       })
     }
   }
-  return out.sort((a, b) => (b.rationale.length - a.rationale.length)).slice(0, top)
+  return out.sort((a, b) => b.pct - a.pct || b.total - a.total).slice(0, top)
 }
 
 // --- digest / orchestrator ---------------------------------------------------
@@ -254,11 +265,12 @@ export async function runBrainDigest(
   cfg: AppConfig,
 ): Promise<BrainDigest> {
   const baseline = scenarioBaseline(history)
-  const [audit, clusters, missed] = await Promise.all([
-    auditLessons(lessons, recentRejections, baseline, deps, cfg),
-    consolidateRejections(rejections, deps),
-    Promise.resolve(findMissedCombos(history)),
-  ])
+  // Sequential, not Promise.all: both audits issue CLI calls, and the app's invariant is that
+  // CLI calls are serialised (they share one mcode scratch cwd). Parallelising them risks two
+  // processes colliding in the same directory and doubles the peak rate limit pressure.
+  const audit = await auditLessons(history, lessons, recentRejections, baseline, deps, cfg)
+  const clusters = await consolidateRejections(rejections, deps)
+  const missed = findMissedCombos(history)
   const newLessons = audit.proposals.filter((p) => p.action === 'add')
   const strengthenOrDismiss = audit.proposals.filter((p) => p.action !== 'add')
   const summary = [
@@ -267,17 +279,4 @@ export async function runBrainDigest(
     missed.length ? `${missed.length} untried winning combo(s) suggested` : null,
   ].filter(Boolean).join(' · ') || 'Brain looked at the data and found nothing to change.'
   return { health: audit.health, newLessons, strengthenOrDismiss, missedCombos: missed, clusters, summary }
-}
-
-/** Apply a subset of new-lesson proposals as pending rows. Returns the inserted ids. */
-export function applyLessonProposals(
-  proposals: LessonProposal[],
-  insert: (p: { rule: string; category?: string; confidence: 'low' | 'medium' | 'high'; status: 'pending'; sourceJobId?: string | null; sourceReasons?: string[]; sourceComment?: string }) => number,
-): number[] {
-  const out: number[] = []
-  for (const p of proposals) {
-    if (p.action !== 'add' || !p.rule) continue
-    out.push(insert({ rule: p.rule, category: p.category, confidence: p.confidence, status: 'pending' }))
-  }
-  return out
 }

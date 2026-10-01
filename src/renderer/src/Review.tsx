@@ -69,12 +69,22 @@ export function Review({ entries, jobs, onOpenEntry, onClose }: {
   const entry = sel ? byId.get(sel.entryId) : undefined
 
   useEffect(() => { window.api.reviewStats().then(setStats).catch(() => { /* ignore */ }) }, [counts.approved, counts.rejected])
-  useEffect(() => { window.api.listRenderLessons().then((all) => {
-    // Only show rules that are actually active in the prompt block — otherwise the list grows unbounded.
-    const active = (all || []).filter((r: any) => r.status === 'approved' || (r.status === 'pending' && (r.confidence === 'medium' || r.confidence === 'high')) || (r.status === 'pending' && r.confidence === 'low' && r.matchedUses >= 2))
-    active.sort((a: any, b: any) => (b.uses + b.matchedUses * 2) - (a.uses + a.matchedUses * 2))
-    setActiveLessons(active.slice(0, 12))
-  }).catch(() => { /* ignore */ }) }, [])
+  // Rules the reviewer can confirm. Must include low-confidence pending rows, not just the
+  // already-active ones: a fresh rule starts low/pending and can only earn promotion by being
+  // ticked here, so hiding it would make the >=2-matches promotion path unreachable.
+  const refreshLessons = useCallback(() => {
+    window.api.listRenderLessons().then((all) => {
+      const candidates = (all || []).filter((r: any) => r.status === 'approved' || r.status === 'pending')
+      // Active rules first, then fresh ones the reviewer hasn't seen yet.
+      candidates.sort((a: any, b: any) => {
+        const av = a.status === 'approved' ? 1e6 - a.id : (a.confidence === 'medium' || a.confidence === 'high' ? 1e3 - a.id : -a.id)
+        const bv = b.status === 'approved' ? 1e6 - b.id : (b.confidence === 'medium' || b.confidence === 'high' ? 1e3 - b.id : -b.id)
+        return bv - av
+      })
+      setActiveLessons(candidates.slice(0, 12))
+    }).catch(() => { /* ignore */ })
+  }, [])
+  useEffect(() => { refreshLessons() }, [refreshLessons])
   useEffect(() => { setRejecting(false); setReasons([]); setComment(''); setMatchedLessonIds([]); setErr(''); setShowPrompt(false) }, [sel?.id])
   useEffect(() => {
     const p = sel?.precheck
@@ -110,6 +120,9 @@ export function Review({ entries, jobs, onOpenEntry, onClose }: {
     const id = sel.id
     if (await run(() => window.api.reviewDecide(id, 'rejected', reasons, comment, matchedLessonIds))) {
       setRejecting(false)
+      setMatchedLessonIds([])
+      // Rule confidence may have just been promoted — refresh so the next rejection sees it.
+      refreshLessons()
       // Stay on the take when it was the last one of its prompt, so the next-step choices are visible.
       if (filter === 'awaiting' && !allTakesRejected(jobs.map((j) => (j.id === id ? { ...j, review: { verdict: 'rejected', reasons, comment, at: '' } } : j)), sel.entryId)) setSelId(nextAwaiting(id))
       else setSelId(id)

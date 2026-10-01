@@ -234,12 +234,6 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
   }
   const [lessons, setLessons] = useState('')
   const [lessonsMsg, setLessonsMsg] = useState('')
-  useEffect(() => { window.api.getRenderLessons().then(setLessons).catch(() => { /* ignore */ }) }, [])
-  async function saveLessons() {
-    await window.api.setRenderLessons(lessons)
-    setLessonsMsg('Saved')
-    setTimeout(() => setLessonsMsg(''), 1800)
-  }
   // Lesson queue (Phase 2+): each rule is one auditable row in DB; operator approves/dismisses.
   const [lessonRows, setLessonRows] = useState<any[]>([])
   const [lessonFilter, setLessonFilter] = useState<'pending' | 'approved' | 'dismissed' | 'all'>('pending')
@@ -248,12 +242,18 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
   const [showPaste, setShowPaste] = useState(false)
   const reloadLessons = useCallback(() => {
     window.api.listRenderLessons().then(setLessonRows).catch(() => { /* ignore */ })
-    window.api.getRenderLessons().then(setLessons).catch(() => { /* ignore */ })
+    window.api.editRenderLessons().then(setLessons).catch(() => { /* ignore */ })
   }, [])
   useEffect(() => { reloadLessons() }, [reloadLessons])
   async function approveRow(id: number) { await window.api.approveRenderLesson(id); reloadLessons() }
   async function dismissRow(id: number, reason: string) {
     await window.api.dismissRenderLesson(id, reason); setDismissId(null); setDismissReason(''); reloadLessons()
+  }
+  async function saveLessons() {
+    await window.api.setRenderLessons(lessons)
+    setLessonsMsg('Replaced — approve the new rules below')
+    setTimeout(() => setLessonsMsg(''), 4000)
+    reloadLessons()
   }
   const [excludeDraft, setExcludeDraft] = useState((config.render?.excludeInstances || []).join(', '))
   const [labDir, setLabDir] = useState('')

@@ -67,13 +67,43 @@ export function buildRenderLessonMessage(o: {
   ].filter((l) => l !== '').join('\n')
 }
 
-/** Parse Claude's JSON output back into rule rows. Tolerant: handles ```json fences and minor noise. */
-export function parseLessonProposals(raw: string): { rule: string; category: string | null }[] {
+/** Pull the first balanced JSON value out of a model response. Models often wrap JSON in a
+ *  preamble ("Sure! Here you go:") or trailing chatter, and the old prose-based pipeline was
+ *  immune to that — so a bare JSON.parse here would silently throw away the whole learning step.
+ *  Handles: bare JSON, ```json fences, and prose-wrapped JSON. Returns null when nothing parses. */
+export function extractJson(raw: string): any | null {
   const text = String(raw || '').trim()
-  if (!text) return []
-  const stripped = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
-  let arr: any
-  try { arr = JSON.parse(stripped) } catch { return [] }
+  if (!text) return null
+  const unfenced = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
+  // Fast path: the whole thing is valid JSON.
+  try { return JSON.parse(unfenced) } catch { /* fall through to extraction */ }
+  // Find the first [ or { and scan for its matching close, respecting strings and escapes.
+  for (let i = 0; i < unfenced.length; i++) {
+    const ch = unfenced[i]
+    if (ch !== '[' && ch !== '{') continue
+    const open = ch, close = ch === '[' ? ']' : '}'
+    let depth = 0, inStr = false, esc = false
+    for (let j = i; j < unfenced.length; j++) {
+      const c = unfenced[j]
+      if (esc) { esc = false; continue }
+      if (c === '\\') { if (inStr) esc = true; continue }
+      if (c === '"') { inStr = !inStr; continue }
+      if (inStr) continue
+      if (c === open) depth++
+      else if (c === close) {
+        depth--
+        if (depth === 0) {
+          try { return JSON.parse(unfenced.slice(i, j + 1)) } catch { break }
+        }
+      }
+    }
+  }
+  return null
+}
+
+/** Parse Claude's JSON output back into rule rows. Tolerates preambles, fences and truncation. */
+export function parseLessonProposals(raw: string): { rule: string; category: string | null }[] {
+  const arr = extractJson(raw)
   if (!Array.isArray(arr)) return []
   const out: { rule: string; category: string | null }[] = []
   for (const item of arr) {
@@ -88,25 +118,27 @@ export function parseLessonProposals(raw: string): { rule: string; category: str
 }
 
 /** Pull "at 0:06" / "at 6s" / "6 seconds in" out of a free-form comment so we can group failures
- *  by moment. Returns null when nothing is found. Matches seconds (1-59) and m:ss forms. */
+ *  by moment. Returns null when nothing is found.
+ *  These are 15-second clips, so an m:ss timestamp is only a video moment when the minutes are 0
+ *  or a strong video cue ("rolled", "at 6 seconds", "fails") sits next to it. A bare "at 1:23"
+ *  is treated as a wall-clock time, not a moment — otherwise it would pollute the clusters. */
 export function parseFailedAtSeconds(comment: string): number | null {
   const text = String(comment || '').trim()
   if (!text) return null
-  // m:ss form: "at 0:06", "0:06 in", "0:06 — plane rolled"
   const mss = text.match(/\b(\d{1,2}):([0-5]\d)\b/)
   if (mss) {
     const m = Number(mss[1]), s = Number(mss[2])
-    if (m < 5) return m * 60 + s
+    if (m === 0) return s // unambiguous: short-form clips never reach 1:00
+    if (m < 5) {
+      const around = text.slice(Math.max(0, mss.index! - 16), mss.index! + mss[0].length + 16)
+      // Strong cues only — "at"/"in"/"around" on their own are too common to disambiguate.
+      if (/\b(sec|seconds?|rolled|flips?|flipped|broke|broken|fails?|failed|starts?|begins?|cuts?)\b/i.test(around)) return m * 60 + s
+    }
   }
-  // "at 6s", "at 6 sec", "6s in", "6 seconds in", "around 6s"
-  const sec = text.match(/\b(\d{1,2}(?:\.\d+)?)\s*(?:s|sec|secs|seconds?)\b/i)
+  // "at 6s", "at 6 sec", "6s in", "6 seconds in"
+  const sec = text.match(/\b(\d{1,3}(?:\.\d+)?)\s*(?:s|sec|secs|seconds?)\b/i)
   if (sec) return Math.min(Number(sec[1]), 300)
   return null
-}
-
-/** Appended to the brain's generation message when render lessons are on. */
-export function renderLessonsBlock(lessons: string): string {
-  return `\n\nRENDER LESSONS — rules learned from renders the reviewer rejected. Follow them while writing this prompt (they are about what the video model gets wrong, not about reach):\n${lessons.trim()}`
 }
 
 /** Ask the brain (with its normal SYSTEM rules) to fix a prompt whose every take was rejected. */

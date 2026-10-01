@@ -94,10 +94,14 @@ const api = {
   approveRenderLesson: (id: number): Promise<boolean> => ipcRenderer.invoke('review:lessons:approve', id),
   dismissRenderLesson: (id: number, reason: string): Promise<boolean> => ipcRenderer.invoke('review:lessons:dismiss', { id, reason }),
   previewRenderLessons: (): Promise<string> => ipcRenderer.invoke('review:lessons:preview'),
+  /** Every live rule as plain editable text (grouped by category, no prompt header). */
+  editRenderLessons: (): Promise<string> => ipcRenderer.invoke('review:lessons:edit'),
   /** Livery Studio Phase 2+: run the brain agent on demand (audit + consolidate + missed combos). */
   brainDigest: (opts?: { apply?: boolean }): Promise<any> => ipcRenderer.invoke('brain:digest', opts || {}),
   /** Bulk-approve a list of lesson ids from the brain agent's proposed digest. */
   brainApplyProposals: (ids: number[]): Promise<boolean> => ipcRenderer.invoke('brain:apply', ids),
+  /** The last brain digest, so a background run isn't lost when the user was on another screen. */
+  lastBrainDigest: (): Promise<any | null> => ipcRenderer.invoke('brain:digest:last'),
   /** Subscribe to brain digest events fired by the reactive trigger or the periodic scheduler. */
   onBrainDigest: (cb: (digest: any) => void): (() => void) => {
     const handler = (_e: unknown, digest: any): void => cb(digest)
