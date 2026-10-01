@@ -357,6 +357,8 @@ export interface NotifySettings {
   connectionError?: boolean
   /** Every usable Dola account is out of video credits for today. */
   creditsOut: boolean
+  /** Phase 2+ brain agent produced a digest (reactive trigger / periodic / on-demand). */
+  brainDigest?: boolean
 }
 
 /** Why sending to Dola is paused (null/absent = running). */

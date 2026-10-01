@@ -4,7 +4,7 @@ import { BrowserWindow, Notification } from 'electron'
 import { getConfig } from './store'
 import type { NotifySettings } from '../shared/types'
 
-export type NotifyKind = keyof Pick<NotifySettings, 'renderDone' | 'renderFailed' | 'capReached' | 'queuePaused' | 'autoRetry' | 'creditsOut' | 'loggedOut' | 'connectionError'>
+export type NotifyKind = keyof Pick<NotifySettings, 'renderDone' | 'renderFailed' | 'capReached' | 'queuePaused' | 'autoRetry' | 'creditsOut' | 'loggedOut' | 'connectionError' | 'brainDigest'>
 
 let getWin: () => BrowserWindow | null = () => null
 

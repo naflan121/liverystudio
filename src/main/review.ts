@@ -22,6 +22,8 @@ interface Deps {
   claude: (message: string, o: { system: string; label: string }) => Promise<string>
   /** Tell the renderer that history changed in the main process (new/updated entries). */
   historyChanged: () => void
+  /** Phase 2+ brain agent: every rejection bumps the reactive counter. */
+  onRejectionRecorded?: () => void
 }
 
 let deps: Deps
@@ -94,6 +96,7 @@ export function decide(jobId: string, verdict: ReviewVerdict, reasons: string[],
     // Per-rule feedback (Phase 2+ lesson queue): the reviewer checked the existing rules this
     // rejection matches. Bump matched_uses on each; auto-promotes low → medium at 2 matches.
     if (matchedLessonIds?.length) try { recordLessonMatches(matchedLessonIds) } catch { /* ignore */ }
+    deps.onRejectionRecorded?.()
     const cfg = getConfig().review
     if (cfg.learnFromRejections) learnFromRejection(job, entry).catch((e) => deps.emitLog('err', `Render-lessons update failed: ${e?.message || e}`))
     applyAllRejectedRule(job.entryId).catch((e) => deps.emitLog('err', `Automatic retry failed: ${e?.message || e}`))

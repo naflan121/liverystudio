@@ -94,6 +94,16 @@ const api = {
   approveRenderLesson: (id: number): Promise<boolean> => ipcRenderer.invoke('review:lessons:approve', id),
   dismissRenderLesson: (id: number, reason: string): Promise<boolean> => ipcRenderer.invoke('review:lessons:dismiss', { id, reason }),
   previewRenderLessons: (): Promise<string> => ipcRenderer.invoke('review:lessons:preview'),
+  /** Livery Studio Phase 2+: run the brain agent on demand (audit + consolidate + missed combos). */
+  brainDigest: (opts?: { apply?: boolean }): Promise<any> => ipcRenderer.invoke('brain:digest', opts || {}),
+  /** Bulk-approve a list of lesson ids from the brain agent's proposed digest. */
+  brainApplyProposals: (ids: number[]): Promise<boolean> => ipcRenderer.invoke('brain:apply', ids),
+  /** Subscribe to brain digest events fired by the reactive trigger or the periodic scheduler. */
+  onBrainDigest: (cb: (digest: any) => void): (() => void) => {
+    const handler = (_e: unknown, digest: any): void => cb(digest)
+    ipcRenderer.on('brain:digest', handler)
+    return () => { ipcRenderer.removeListener('brain:digest', handler) }
+  },
   /** Main changed history on its own (e.g. a rewritten prompt) — reload it. */
   onHistoryChanged: (cb: () => void): (() => void) => {
     const handler = (): void => cb()
