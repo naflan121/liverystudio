@@ -121,6 +121,21 @@ out-of-credit accounts are always skipped. The screen shows state, today/all-tim
 last used, current render, and Start / Show / End cooldown / End credit rest / Reserve / reset.
 No anti-detection work on Dola (user's clients' own accounts, used within their daily credits).
 
+**Dola logouts + warm-up (`driver.ts` loginState / warmUp, `render.ts` "Dola logouts").** Dola signs accounts
+out by itself now and then. Logged out = a visible "Log In" button — never judge by the URL (it keeps
+`?from_logout=1` after logging back in). `assertLoggedIn()` runs before typing, after the warm-up, right
+before send, and on every `waitForVideo` poll; it throws `LoggedOutError`, and `onLoggedOut()` marks the
+account (meta `dola_logged_out`), records how many renders it had sent (`InstanceUsage.logoutsAfter`, last 10)
+and moves the job to another account without counting a try (a job already sent on that account is sent
+again elsewhere; its old chat URL goes in the note). Logged-out accounts are skipped until `checkLogins()`
+(Accounts → Check login / Check all logins, or the `render.loginCheckMinutes` timer) sees them logged in,
+which also resets `sinceLogin`. `render.perLoginCap` (0 = off) rests an account after N renders since its
+last login (↺ on the row resets the count). Warm-up (`render.warmup`, default on, `render.warmupMessage`
+default "Hi"): new chat → greeting → wait for the reply → the video prompt in that same chat. Notification
+kind `loggedOut`. The same checks + warm-up live in dola-mcp (`dola_check_login`, `dola_warmup`).
+Not built: switching an account's proxy when Dola logs it out — that would work around Dola's own
+enforcement (see the no-anti-detection rule above). Logged-out accounts wait for the user to log in again.
+
 ## What the brain is (inherited from Livery Lab)
 
 **Livery Lab** — a self-learning Electron desktop app that generates
