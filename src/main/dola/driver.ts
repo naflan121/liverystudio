@@ -42,6 +42,15 @@ export class NoCreditsError extends Error {
   constructor(public info: CreditsInfo) { super(`Dola account is out of video credits for today${info.need != null ? ` (needs ${info.need}, has ${info.left ?? 0})` : ''}.`) }
 }
 export type CancelCheck = () => boolean
+
+// Dola signs an account out by itself now and then (e.g. after a number of generations).
+// A logged-out page still shows the chat box, so a send "works" but nothing generates.
+// Decided from what is on screen, never from the URL: after logging back in the page keeps
+// "?from_logout=1" in its address until it navigates, while already being logged in.
+export interface LoginState { loggedIn: boolean | null; reason: string }
+export class LoggedOutError extends Error {
+  constructor(public account: string, public reason: string) { super(`Dola logged ${account} out (${reason}). Log in again on that account.`) }
+}
 const checkCancel = (c?: CancelCheck): void => { if (c?.()) throw new Cancelled() }
 
 // ---------- Control API ----------
@@ -147,6 +156,36 @@ export function forget(id: number): void {
 
 // ---------- Page operations ----------
 
+/**
+ * Logged in or out, read from the page as it is (no navigation, safe while a render runs).
+ * Logged out = a visible "Log In" button. Hard timeout so a frozen page can't hang the check.
+ */
+export async function loginState(page: Page, timeoutMs = 10_000): Promise<LoginState> {
+  const read = page.evaluate(() => {
+    const vis = (el: Element): boolean => !!((el as HTMLElement).offsetParent || el.getClientRects().length)
+    const loginButton = Array.from(document.querySelectorAll('button, a, [role="button"]'))
+      .some((el) => vis(el) && /^\s*log\s*in\s*$/i.test((el as HTMLElement).innerText || ''))
+    const leaves = Array.from(document.querySelectorAll('a, button, div, span'))
+      .filter((el) => el.childElementCount === 0 && vis(el)).map((el) => ((el as HTMLElement).innerText || '').trim())
+    return { loginButton, member: ['Scheduled Tasks', 'Drive', 'Skills'].filter((t) => leaves.includes(t)) }
+  })
+  let timer: NodeJS.Timeout | undefined
+  const timeout = new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error(`the page did not answer within ${Math.round(timeoutMs / 1000)}s`)), timeoutMs) })
+  try {
+    const seen = await Promise.race([read, timeout])
+    if (seen.loginButton) return { loggedIn: false, reason: '"Log In" button shown' }
+    return { loggedIn: true, reason: seen.member.length ? `signed-in menu: ${seen.member.join(', ')}` : 'no "Log In" button' }
+  } catch (e: any) {
+    return { loggedIn: null, reason: `could not read the page: ${e?.message || e}` }
+  } finally { clearTimeout(timer) }
+}
+
+/** Throws LoggedOutError when the page shows Dola's "Log In" button. An unreadable page passes (other checks catch it). */
+export async function assertLoggedIn(page: Page, account: string): Promise<void> {
+  const s = await loginState(page)
+  if (s.loggedIn === false) throw new LoggedOutError(account, s.reason)
+}
+
 async function openNewChat(page: Page): Promise<void> {
   await page.goto(CHAT_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 })
   await page.locator(SEL.editor).first().waitFor({ state: 'visible', timeout: 30_000 })
@@ -180,9 +219,41 @@ async function typePrompt(page: Page, prompt: string): Promise<void> {
   if (await send.isDisabled()) throw new Error('Prompt typed but the send button stayed disabled.')
 }
 
-/** New chat -> Pro -> "Generate Videos" skill -> settings block -> [instructions] -> prompt (not sent). */
-export async function fillVideoPrompt(page: Page, o: { prompt: string; model: string; duration: string; aspect: string; instructions?: string; references?: string }): Promise<void> {
+/**
+ * Warm-up before a video prompt: new chat, send a short greeting (Fast mode, as a new chat opens)
+ * and wait for Dola's reply to finish, so the video prompt goes into a chat that has answered once.
+ * A missing reply isn't an error — the video prompt still follows.
+ */
+export async function warmUp(page: Page, message: string, cancel?: CancelCheck, replyTimeoutMs = 90_000): Promise<{ replied: boolean; busy: boolean; reply: string | null }> {
   await openNewChat(page)
+  await clearEditor(page)
+  const before = await page.locator(SEL.reply).count()
+  await typePrompt(page, message)
+  await page.locator(SEL.send).click()
+  const deadline = Date.now() + replyTimeoutMs
+  let text: string | null = null
+  while (Date.now() < deadline) { // wait for a reply to appear...
+    checkCancel(cancel)
+    if (await page.locator(SEL.reply).count() > before && (text = await lastReplyText(page))) break
+    await page.waitForTimeout(2000)
+  }
+  for (let i = 0; text && i < 15; i++) { // ...then for it to stop streaming
+    checkCancel(cancel)
+    await page.waitForTimeout(2000)
+    const now = await lastReplyText(page)
+    if (now === text) break
+    text = now
+  }
+  return { replied: !!text, busy: !!text && BUSY_RE.test(text), reply: text ? text.slice(0, 200) : null }
+}
+
+/**
+ * New chat -> Pro -> "Generate Videos" skill -> settings block -> [instructions] -> prompt (not sent).
+ * newChat=false keeps the current chat (after a warm-up).
+ */
+export async function fillVideoPrompt(page: Page, o: { prompt: string; model: string; duration: string; aspect: string; instructions?: string; references?: string; newChat?: boolean }): Promise<void> {
+  if (o.newChat === false) await page.locator(SEL.editor).first().waitFor({ state: 'visible', timeout: 30_000 })
+  else await openNewChat(page)
   await setMode(page, 'Pro')
   await clearEditor(page)
   await page.keyboard.type(VIDEO_SKILL.command)
@@ -295,11 +366,12 @@ const lastReplyHasVideo = (page: Page): Promise<boolean> => page.evaluate((sel) 
  * Reloads only when a video shows in the last reply, or every 3rd poll as a fallback.
  * chatUrl pins the wait to one conversation: if the page wandered off, it is reopened.
  */
-export async function waitForVideo(page: Page, o: { chatUrl?: string; waitMinutes: number; cancel?: CancelCheck }): Promise<string[]> {
+export async function waitForVideo(page: Page, o: { chatUrl?: string; waitMinutes: number; cancel?: CancelCheck; account?: string }): Promise<string[]> {
   const deadline = Date.now() + o.waitMinutes * 60_000
   for (let poll = 0; ; poll++) {
     checkCancel(o.cancel)
     if (o.chatUrl && page.url() !== o.chatUrl) await page.goto(o.chatUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 })
+    if (o.account) await assertLoggedIn(page, o.account)
     const last = await lastReplyText(page)
     const credits = parseCredits(last)
     if (credits) throw new NoCreditsError(credits)

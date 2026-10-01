@@ -220,10 +220,23 @@ export interface RenderSettings {
   pickStrategy?: 'balanced' | 'first'
   /** Max renders sent per account per day (0 = no per-account limit; the overall daily cap still applies). */
   perAccountDailyCap?: number
+  /** Before each video prompt: new chat, send `warmupMessage`, wait for Dola's reply, then the video prompt in that chat. */
+  warmup?: boolean
+  warmupMessage?: string
+  /** Rest an account after this many renders since its last login (0 = off). Set it just under where Dola tends to log accounts out. */
+  perLoginCap?: number
+  /** Check every running account's login every N minutes while the Studio is open (0 = only before sends, while waiting, and on demand). */
+  loginCheckMinutes?: number
 }
 
 /** Per-account usage record (Dola instance manager). */
-export interface InstanceUsage { total: number; ok: number; failed: number; lastUsed?: string; days: Record<string, number> }
+export interface InstanceUsage {
+  total: number; ok: number; failed: number; lastUsed?: string; days: Record<string, number>
+  /** Renders sent since the account was last seen logging back in to Dola. */
+  sinceLogin?: number
+  /** Renders it had sent when Dola logged it out, newest last (last 10) — what "logs out after X" really is. */
+  logoutsAfter?: number[]
+}
 
 export type RenderStatus = 'queued' | 'starting' | 'sending' | 'generating' | 'downloading' | 'done' | 'failed' | 'cancelled'
 
@@ -338,6 +351,8 @@ export interface NotifySettings {
   queuePaused: boolean
   /** The Studio re-rendered or rewrote a prompt by itself after every take was rejected. */
   autoRetry: boolean
+  /** Dola logged an account out (its render moved to another account). */
+  loggedOut?: boolean
   /** Every usable Dola account is out of video credits for today. */
   creditsOut: boolean
 }
@@ -386,7 +401,18 @@ export interface DolaInstanceInfo {
   limitReached?: boolean
   /** Title of the render running on it right now. */
   currentJob?: string
+  /** Dola logged this account out (ms when noticed) and why; skipped until a login check finds it logged in. */
+  loggedOutSince?: number
+  loggedOutReason?: string
+  /** Renders since its last login, and how many it had sent at each recent logout. */
+  sinceLogin?: number
+  logoutsAfter?: number[]
+  /** Reached Settings → Render → renders per login. */
+  loginCapReached?: boolean
 }
+
+/** Result of a login check on one account. loggedIn null = couldn't tell (not running / page unreadable). */
+export interface LoginCheck { id: number; name: string; loggedIn: boolean | null; reason: string }
 
 export interface RenderOverview {
   /** Set while sending is paused (by you or by the Dola page guard). */

@@ -33,6 +33,10 @@ export const DEFAULT_RENDER: RenderSettings = {
   creditResetHour: 0,
   pickStrategy: 'balanced',
   perAccountDailyCap: 0,
+  warmup: true,
+  warmupMessage: 'Hi',
+  perLoginCap: 0,
+  loginCheckMinutes: 0,
 }
 
 export const DEFAULT_REVIEW: ReviewSettings = REVIEW_DEFAULTS // shared so the renderer can fill gaps too
@@ -54,6 +58,7 @@ export const DEFAULT_NOTIFY: NotifySettings = {
   queuePaused: true,
   autoRetry: false,
   creditsOut: true,
+  loggedOut: true,
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
