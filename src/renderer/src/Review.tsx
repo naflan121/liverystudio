@@ -43,6 +43,9 @@ export function Review({ entries, jobs, onOpenEntry, onClose }: {
   const [reasons, setReasons] = useState<string[]>([])
   const [comment, setComment] = useState('')
   const [busy, setBusy] = useState(false)
+  // Active rules the rejection can be matched against (Phase 2+ lesson queue). Each row carries an id + rule text.
+  const [activeLessons, setActiveLessons] = useState<{ id: number; rule: string; category: string | null; uses: number; matchedUses: number; confidence: string }[]>([])
+  const [matchedLessonIds, setMatchedLessonIds] = useState<number[]>([])
   const [err, setErr] = useState('')
   const [showPrompt, setShowPrompt] = useState(false)
   const [stats, setStats] = useState<{ scenarios: { scenario: string; approved: number; rejected: number }[]; reasons: { reason: string; n: number }[] } | null>(null)
@@ -66,7 +69,13 @@ export function Review({ entries, jobs, onOpenEntry, onClose }: {
   const entry = sel ? byId.get(sel.entryId) : undefined
 
   useEffect(() => { window.api.reviewStats().then(setStats).catch(() => { /* ignore */ }) }, [counts.approved, counts.rejected])
-  useEffect(() => { setRejecting(false); setReasons([]); setComment(''); setErr(''); setShowPrompt(false) }, [sel?.id])
+  useEffect(() => { window.api.listRenderLessons().then((all) => {
+    // Only show rules that are actually active in the prompt block — otherwise the list grows unbounded.
+    const active = (all || []).filter((r: any) => r.status === 'approved' || (r.status === 'pending' && (r.confidence === 'medium' || r.confidence === 'high')) || (r.status === 'pending' && r.confidence === 'low' && r.matchedUses >= 2))
+    active.sort((a: any, b: any) => (b.uses + b.matchedUses * 2) - (a.uses + a.matchedUses * 2))
+    setActiveLessons(active.slice(0, 12))
+  }).catch(() => { /* ignore */ }) }, [])
+  useEffect(() => { setRejecting(false); setReasons([]); setComment(''); setMatchedLessonIds([]); setErr(''); setShowPrompt(false) }, [sel?.id])
   useEffect(() => {
     const p = sel?.precheck
     if (rejecting && reasons.length === 0 && p?.status === 'done' && p.verdict === 'reject' && p.reasons?.length) setReasons(p.reasons)
@@ -99,7 +108,7 @@ export function Review({ entries, jobs, onOpenEntry, onClose }: {
     if (!sel || busy) return
     if (!reasons.length && !comment.trim()) { setErr('Pick at least one reason or write a comment — it is what the learning uses.'); return }
     const id = sel.id
-    if (await run(() => window.api.reviewDecide(id, 'rejected', reasons, comment))) {
+    if (await run(() => window.api.reviewDecide(id, 'rejected', reasons, comment, matchedLessonIds))) {
       setRejecting(false)
       // Stay on the take when it was the last one of its prompt, so the next-step choices are visible.
       if (filter === 'awaiting' && !allTakesRejected(jobs.map((j) => (j.id === id ? { ...j, review: { verdict: 'rejected', reasons, comment, at: '' } } : j)), sel.entryId)) setSelId(nextAwaiting(id))
@@ -228,6 +237,26 @@ export function Review({ entries, jobs, onOpenEntry, onClose }: {
                           })}
                         </div>
                         <textarea autoFocus value={comment} onChange={(e) => setComment(e.target.value)} rows={2} placeholder="What exactly went wrong? e.g. “plane rolled inverted at 0:06”. This is what the learning reads." style={{ width: '100%', padding: '9px 11px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 13, boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit', color: INK }} />
+                        {activeLessons.length > 0 && (
+                          <div style={{ display: 'grid', gap: 6 }}>
+                            <div style={{ ...lbl, marginBottom: 0 }}>Did this match an existing rule?</div>
+                            <div style={{ fontSize: 11.5, color: MUTE, lineHeight: 1.5 }}>Tick the rules that already cover this failure — that strengthens them and teaches the brain which rules actually help.</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              {activeLessons.map((l) => {
+                                const on = matchedLessonIds.includes(l.id)
+                                return (
+                                  <label key={l.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 8px', border: `1px solid ${on ? BAD : LINE}`, borderRadius: 8, background: on ? 'var(--bad-soft)' : 'var(--surface)', cursor: 'pointer', fontSize: 12.5, lineHeight: 1.45 }}>
+                                    <input type="checkbox" checked={on} onChange={() => setMatchedLessonIds((p) => on ? p.filter((x) => x !== l.id) : [...p, l.id])} style={{ marginTop: 2, accentColor: BAD }} />
+                                    <span style={{ flex: 1, minWidth: 0 }}>
+                                      <span style={{ display: 'block', color: INK }}>{l.rule}</span>
+                                      <span style={{ display: 'block', fontSize: 11, color: MUTE, marginTop: 2 }}>{[l.category, `${l.uses}× used`, `${l.matchedUses}× matched`].filter(Boolean).join(' · ')}</span>
+                                    </span>
+                                  </label>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )}
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                           <button disabled={busy} onClick={reject} style={{ background: BAD, color: '#fff', border: 'none', borderRadius: 9, padding: '9px 16px', fontSize: 13.5, fontWeight: 600, cursor: 'pointer' }}>Reject & move to rejected\</button>
                           <span style={{ fontSize: 11.5, color: MUTE }}>Ctrl+Enter</span>

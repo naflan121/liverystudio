@@ -8,7 +8,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { getConfig, getRenderLessons } from './store'
-import { getEntry, upsertEntries, insertReview, undoLatestReview, insertLesson } from './db'
+import { getEntry, upsertEntries, insertReview, undoLatestReview, insertLesson, recordLessonMatches } from './db'
 import { getJob, updateJob, listJobs, submit } from './render'
 import { notify } from './notify'
 import { SYSTEM, longLimit } from '../shared/prompts'
@@ -74,7 +74,7 @@ function writeSidecarReview(file: string, review: JobReview | null): void {
   } catch { /* sidecar missing or unreadable — the DB is the record */ }
 }
 
-export function decide(jobId: string, verdict: ReviewVerdict, reasons: string[], comment: string): RenderJob {
+export function decide(jobId: string, verdict: ReviewVerdict, reasons: string[], comment: string, matchedLessonIds?: number[]): RenderJob {
   const job = getJob(jobId)
   if (!job || job.status !== 'done' || !job.file) throw new Error('Only a finished render can be reviewed.')
   const at = new Date().toISOString()
@@ -88,6 +88,9 @@ export function decide(jobId: string, verdict: ReviewVerdict, reasons: string[],
   deps.emitLog(verdict === 'rejected' ? 'warn' : verdict === 'approved' ? 'ok' : 'info', `${verdict === 'approved' ? 'Approved' : verdict === 'rejected' ? 'Rejected' : 'Skipped'}: "${job.title}"${review.reasons.length ? ` — ${review.reasons.map(reasonLabel).join(', ')}` : ''}`)
 
   if (verdict === 'rejected') {
+    // Per-rule feedback (Phase 2+ lesson queue): the reviewer checked the existing rules this
+    // rejection matches. Bump matched_uses on each; auto-promotes low → medium at 2 matches.
+    if (matchedLessonIds?.length) try { recordLessonMatches(matchedLessonIds) } catch { /* ignore */ }
     const cfg = getConfig().review
     if (cfg.learnFromRejections) learnFromRejection(job, entry).catch((e) => deps.emitLog('err', `Render-lessons update failed: ${e?.message || e}`))
     applyAllRejectedRule(job.entryId).catch((e) => deps.emitLog('err', `Automatic retry failed: ${e?.message || e}`))

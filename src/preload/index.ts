@@ -81,7 +81,7 @@ const api = {
   /** Re-read history and pull in prompts created in Livery Lab since the import (append-only). */
   refreshHistory: (): Promise<{ history: Entry[]; added: number }> => ipcRenderer.invoke('history:refresh'),
   // --- Livery Studio: review ---
-  reviewDecide: (jobId: string, verdict: ReviewVerdict, reasons: string[], comment: string): Promise<RenderJob> => ipcRenderer.invoke('review:decide', { jobId, verdict, reasons, comment }),
+  reviewDecide: (jobId: string, verdict: ReviewVerdict, reasons: string[], comment: string, matchedLessonIds?: number[]): Promise<RenderJob> => ipcRenderer.invoke('review:decide', { jobId, verdict, reasons, comment, matchedLessonIds }),
   reviewUndo: (jobId: string): Promise<RenderJob> => ipcRenderer.invoke('review:undo', jobId),
   reviewRerender: (entryId: number): Promise<RenderJob> => ipcRenderer.invoke('review:rerender', entryId),
   /** One Claude call: rewrite the prompt from the rejection reasons + render lessons, then render it. */

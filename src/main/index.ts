@@ -640,7 +640,7 @@ function registerIpc(): void {
   ipcMain.handle('brain:labDir', () => liveryLabDataDir())
 
   // --- Livery Studio: review (Phase 2) -------------------------------------------
-  ipcMain.handle('review:decide', (_e, p: { jobId: string; verdict: 'approved' | 'rejected' | 'skipped'; reasons: string[]; comment: string }) => reviewDecide(p.jobId, p.verdict, p.reasons, p.comment))
+  ipcMain.handle('review:decide', (_e, p: { jobId: string; verdict: 'approved' | 'rejected' | 'skipped'; reasons: string[]; comment: string; matchedLessonIds?: number[] }) => reviewDecide(p.jobId, p.verdict, p.reasons, p.comment, p.matchedLessonIds))
   ipcMain.handle('review:undo', (_e, jobId: string) => reviewUndo(jobId))
   ipcMain.handle('review:rerender', (_e, entryId: number) => rerender(entryId))
   ipcMain.handle('review:rewrite', (_e, entryId: number) => rewriteAndRender(entryId))
