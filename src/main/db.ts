@@ -74,6 +74,30 @@ const MIGRATIONS: string[] = [
   // v4 — which engine a call ran on; the AI pre-check verdict at the time you decided (agreement tracking)
   `ALTER TABLE usage ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude';
    ALTER TABLE reviews ADD COLUMN precheck TEXT;`,
+  // v5 — render lessons: each rejection-derived rule is one row, so it's auditable
+  // (source job + reasons), operator-approvable, dismissable, and the renderer can
+  // bump usage stats when a reviewer confirms a rule matched their rejection.
+  `CREATE TABLE render_lessons (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     created_at TEXT NOT NULL,
+     source_job_id TEXT,
+     source_reasons TEXT NOT NULL DEFAULT '[]',
+     source_comment TEXT,
+     rule TEXT NOT NULL,
+     category TEXT,
+     confidence TEXT NOT NULL DEFAULT 'low',
+     status TEXT NOT NULL DEFAULT 'pending',
+     uses INTEGER NOT NULL DEFAULT 0,
+     matched_uses INTEGER NOT NULL DEFAULT 0,
+     last_used_at TEXT,
+     dismissed_at TEXT,
+     dismiss_reason TEXT,
+     superseded_by INTEGER,
+     imported_from TEXT
+   );
+   CREATE INDEX render_lessons_status ON render_lessons(status);
+   CREATE INDEX render_lessons_confidence ON render_lessons(confidence);
+   CREATE INDEX render_lessons_superseded ON render_lessons(superseded_by);`,
 ]
 
 export function dbPath(): string {
@@ -212,6 +236,216 @@ export function reviewStatsByScenario(): ReviewStatRow[] {
 export function rejectReasonCounts(): { reason: string; n: number }[] {
   return getDb().prepare(`SELECT j.value reason, COUNT(*) n FROM reviews, json_each(reviews.reasons) j
     WHERE verdict = 'rejected' AND undone_at IS NULL GROUP BY j.value ORDER BY n DESC`).all() as { reason: string; n: number }[]
+}
+
+// --- render lessons (rejection-derived prompt-writing rules) -----------------------
+
+export type LessonConfidence = 'low' | 'medium' | 'high'
+export type LessonStatus = 'pending' | 'approved' | 'dismissed'
+
+export interface RenderLessonRow {
+  id: number
+  createdAt: string
+  sourceJobId: string | null
+  sourceReasons: string[]
+  sourceComment: string | null
+  rule: string
+  category: string | null
+  confidence: LessonConfidence
+  status: LessonStatus
+  uses: number
+  matchedUses: number
+  lastUsedAt: string | null
+  dismissedAt: string | null
+  dismissReason: string | null
+  supersededBy: number | null
+  importedFrom: string | null
+}
+
+/** Insert one lesson row. Returns the new id. The caller passes `confidence`; we trust it. */
+export function insertLesson(l: {
+  sourceJobId?: string | null
+  sourceReasons?: string[]
+  sourceComment?: string | null
+  rule: string
+  category?: string | null
+  confidence?: LessonConfidence
+  status?: LessonStatus
+  importedFrom?: string | null
+}): number {
+  const r = getDb().prepare(`INSERT INTO render_lessons (created_at, source_job_id, source_reasons, source_comment, rule, category, confidence, status, imported_from)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      new Date().toISOString(),
+      l.sourceJobId ?? null,
+      JSON.stringify(l.sourceReasons ?? []),
+      l.sourceComment ?? null,
+      l.rule.trim(),
+      l.category ?? null,
+      l.confidence ?? 'low',
+      l.status ?? 'pending',
+      l.importedFrom ?? null,
+    )
+  return Number(r.lastInsertRowid)
+}
+
+/** Bulk insert (used by the one-time import of render-lessons.md). */
+export function insertLessonsBulk(rows: { rule: string; category: string | null; createdAt: string; importedFrom: string }[]): void {
+  if (!rows.length) return
+  const d = getDb()
+  const stmt = d.prepare(`INSERT INTO render_lessons (created_at, rule, category, confidence, status, imported_from) VALUES (?, ?, ?, 'low', 'pending', ?)`)
+  d.transaction(() => {
+    for (const r of rows) stmt.run(r.createdAt, r.rule.trim(), r.category, r.importedFrom)
+  })()
+}
+
+export function getLesson(id: number): RenderLessonRow | null {
+  const r = getDb().prepare('SELECT * FROM render_lessons WHERE id = ?').get(id) as any
+  return r ? rowToLesson(r) : null
+}
+
+/** Active = approved or medium+ confidence pending (low-confidence pending is hidden until it's repeated or approved).
+ *  Optional filter narrows to lessons with at least one matching scenario reason. */
+export function listActiveLessons(): RenderLessonRow[] {
+  return (getDb().prepare(`SELECT * FROM render_lessons
+    WHERE status IN ('approved')
+       OR (status = 'pending' AND confidence IN ('medium', 'high'))
+       OR (status = 'pending' AND confidence = 'low' AND matched_uses >= 2)
+    ORDER BY confidence DESC, uses DESC, id DESC`).all() as any[]).map(rowToLesson)
+}
+
+/** Every lesson the operator can act on in the Settings UI, newest first. */
+export function listAllLessons(): RenderLessonRow[] {
+  return (getDb().prepare('SELECT * FROM render_lessons ORDER BY id DESC').all() as any[]).map(rowToLesson)
+}
+
+export function approveLesson(id: number): void {
+  getDb().prepare(`UPDATE render_lessons SET status = 'approved', confidence = 'high' WHERE id = ?`).run(id)
+}
+
+export function dismissLesson(id: number, reason: string): void {
+  getDb().prepare(`UPDATE render_lessons SET status = 'dismissed', dismissed_at = ?, dismiss_reason = ? WHERE id = ?`)
+    .run(new Date().toISOString(), reason.trim() || null, id)
+}
+
+/** Bump usage counters when a rule was injected into a generation prompt. */
+export function bumpLessonUses(ids: number[]): void {
+  if (!ids.length) return
+  const placeholders = ids.map(() => '?').join(',')
+  getDb().prepare(`UPDATE render_lessons SET uses = uses + 1, last_used_at = ? WHERE id IN (${placeholders})`)
+    .run(new Date().toISOString(), ...ids)
+}
+
+/** Record that one or more rules were checked in a rejection (per-rule checkbox in Review). Auto-promotes low → medium at 2 matches. */
+export function recordLessonMatches(ids: number[]): void {
+  if (!ids.length) return
+  const placeholders = ids.map(() => '?').join(',')
+  const d = getDb()
+  d.transaction(() => {
+    d.prepare(`UPDATE render_lessons SET matched_uses = matched_uses + 1, last_used_at = ? WHERE id IN (${placeholders})`)
+      .run(new Date().toISOString(), ...ids)
+    d.prepare(`UPDATE render_lessons SET confidence = 'medium' WHERE confidence = 'low' AND matched_uses >= 2 AND id IN (${placeholders})`)
+      .run(...ids)
+  })()
+}
+
+/** Build the text block that goes onto every generation prompt. Groups by category if present.
+ *  Stays under `budget` characters by keeping the highest-confidence + most-used rules; returns the IDs
+ *  that actually fit so callers can bump their usage counters. */
+export function formatLessonsBlock(rows: RenderLessonRow[], budget = 1500): { text: string; ids: number[] } {
+  if (!rows.length) return { text: '', ids: [] }
+  const sorted = [...rows].sort((a, b) => {
+    const ca = confidenceRank(a.confidence), cb = confidenceRank(b.confidence)
+    if (cb !== ca) return cb - ca
+    if ((b.uses + b.matchedUses * 2) !== (a.uses + a.matchedUses * 2)) return (b.uses + b.matchedUses * 2) - (a.uses + a.matchedUses * 2)
+    return b.id - a.id
+  })
+  const header = '\n\nRENDER LESSONS — rules learned from renders the reviewer rejected. Follow them while writing this prompt (they are about what the video model gets wrong, not about reach):\n'
+  const out: { cat: string; rule: string; id: number }[] = []
+  let len = header.length
+  let truncated = false
+  for (const r of sorted) {
+    const line = `- ${r.rule}\n`
+    const catLine = `### ${r.category || 'General'}\n`
+    if (len + line.length + catLine.length > budget && out.length) { truncated = true; break }
+    out.push({ cat: r.category || 'General', rule: r.rule, id: r.id })
+    len += line.length + catLine.length
+  }
+  if (!out.length) return { text: '', ids: [] }
+  // Group by category while preserving the chosen order.
+  const groups = new Map<string, string[]>()
+  const idOrder: number[] = []
+  for (const o of out) {
+    const arr = groups.get(o.cat) || groups.set(o.cat, []).get(o.cat)!
+    arr.push(`- ${o.rule}`)
+    if (!idOrder.includes(o.id)) idOrder.push(o.id)
+  }
+  const sections = [...groups.entries()].map(([cat, lines]) => `### ${cat}\n${lines.join('\n')}`)
+  const tail = truncated ? '\n_(more rules available — review Settings → Review to enable them)_' : ''
+  return { text: header + sections.join('\n\n') + tail, ids: idOrder }
+}
+
+function confidenceRank(c: LessonConfidence): number {
+  return c === 'high' ? 3 : c === 'medium' ? 2 : 1
+}
+
+function rowToLesson(r: any): RenderLessonRow {
+  return {
+    id: r.id,
+    createdAt: r.created_at,
+    sourceJobId: r.source_job_id,
+    sourceReasons: safeParseArray(r.source_reasons),
+    sourceComment: r.source_comment,
+    rule: r.rule,
+    category: r.category,
+    confidence: r.confidence,
+    status: r.status,
+    uses: r.uses ?? 0,
+    matchedUses: r.matched_uses ?? 0,
+    lastUsedAt: r.last_used_at,
+    dismissedAt: r.dismissed_at,
+    dismissReason: r.dismiss_reason,
+    supersededBy: r.superseded_by,
+    importedFrom: r.imported_from,
+  }
+}
+
+function safeParseArray(s: string | null): string[] {
+  if (!s) return []
+  try { const v = JSON.parse(s); return Array.isArray(v) ? v : [] } catch { return [] }
+}
+
+/** Seed render_lessons from a legacy render-lessons.md, one time per install. Idempotent (meta flag). */
+export function seedRenderLessonsFromFile(dataDir: string): number {
+  if (getMeta('render_lessons_seeded')) return 0
+  setMeta('render_lessons_seeded', new Date().toISOString())
+  const p = path.join(dataDir, 'render-lessons.md')
+  if (!fs.existsSync(p)) return 0
+  let text = ''
+  try { text = fs.readFileSync(p, 'utf8') } catch { return 0 }
+  const rows = parseLessonsMarkdown(text)
+  if (!rows.length) return 0
+  insertLessonsBulk(rows.map((r) => ({ ...r, createdAt: new Date().toISOString(), importedFrom: 'render-lessons.md' })))
+  // Rename so a future "Reset all memory" doesn't double-import, but keep a .bak for one release.
+  try { fs.renameSync(p, p + '.imported-bak') } catch { /* ignore */ }
+  return rows.length
+}
+
+/** Walk a markdown file, group bullet lines under their preceding `#` heading. */
+export function parseLessonsMarkdown(text: string): { rule: string; category: string | null }[] {
+  const out: { rule: string; category: string | null }[] = []
+  let cat: string | null = null
+  const lines = text.split(/\r?\n/)
+  for (const raw of lines) {
+    const line = raw.trim()
+    if (!line) continue
+    const h = line.match(/^#{1,3}\s+(.+)$/)
+    if (h) { cat = h[1].trim(); continue }
+    const b = line.match(/^[-*+]\s+(.+)$/)
+    if (b) { out.push({ rule: b[1].trim(), category: cat }); continue }
+    // Plain paragraph lines become a single "General" rule (rare in the existing file).
+    out.push({ rule: line, category: cat || 'General' })
+  }
+  return out
 }
 
 // --- usage (Claude CLI calls) -------------------------------------------------------

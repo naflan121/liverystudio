@@ -9,11 +9,10 @@ import { initPrecheck, queuePrecheck } from './precheck'
 import {
   getConfig, setConfig, getHistory, setHistory, getPlaybook, setPlaybook,
   getPlaybookVersions, appendLearningLog, getLearningLog, resetMemory, dataDir, setDataDir,
-  getTrends, setTrends, getSavedConcepts, DEFAULT_CONFIG, setSavedConcepts, importFromLiveryLab, liveryLabDataDir, pullNewFromLab, initStorage, backupStorage, getRenderLessons, setRenderLessons,
+  getTrends, setTrends, getSavedConcepts, DEFAULT_CONFIG, setSavedConcepts, importFromLiveryLab, liveryLabDataDir, pullNewFromLab, initStorage, backupStorage, getRenderLessons, setRenderLessons, getRenderLessonsWithIds, getAllRenderLessons, approveRenderLesson, dismissRenderLesson, bumpRenderLessonUses, recordRenderLessonMatches,
 } from './store'
 import { closeDb, reviewStatsByScenario, rejectReasonCounts, getEntry as getEntryById, insertUsage, usageSummary, precheckAgreement } from './db'
 import { initReview, decide as reviewDecide, undo as reviewUndo, rewriteAndRender, rerender, markUnusable } from './review'
-import { renderLessonsBlock } from '../shared/review'
 import { varietyNote } from '../shared/variety'
 import { DOLA_CHECK_SYSTEM, dolaCheckMsg, parseDolaCheck, type RenderCheckResult } from '../shared/renderCheck'
 import { BRAINSTORM_SYSTEM, buildBrainstormMessage, parseBrainstorm, formatEvidence, triedConceptList } from '../shared/brainstorm'
@@ -248,13 +247,17 @@ async function resolveReferenceBlock(job: RenderJob): Promise<string> {
 }
 
 // Livery Studio: rules learned from rejected renders ride along on every new prompt
-// (Settings → Review). Appended outside the brain's own message builder.
+// (Settings → Review). Appended outside the brain's own message builder. Bumps the
+// uses counter on every lesson we actually inject — the operator can see which rules
+// the brain is really relying on.
 function withRenderLessons(message: string): string {
   const cfg = getConfig()
-  const lessons = cfg.review.useLessons ? getRenderLessons().trim() : ''
-  if (!lessons) return message
-  emitLog('info', `Render lessons attached: ${lessons.length} chars.`)
-  return message + renderLessonsBlock(lessons)
+  if (!cfg.review.useLessons) return message
+  const { text, ids } = getRenderLessonsWithIds(cfg.review.lessonsBudget)
+  if (!text) return message
+  if (ids.length) bumpRenderLessonUses(ids)
+  emitLog('info', `Render lessons attached: ${text.length} chars, ${ids.length} rule(s).`)
+  return message + text
 }
 
 // Livery Studio: what setting/camera/light were already used (this lineup, the last
@@ -707,6 +710,7 @@ if (!gotLock) {
     setOnRenderDone((job) => { const p = getConfig().ai.precheck; if (p.enabled && p.auto && getConfig().ai.minimax.enabled) queuePrecheck(job.id) })
     win?.webContents.once('did-finish-load', () => {
       if (migrated && (migrated.entries || migrated.jobs)) emitLog('ok', `Moved storage to SQLite: ${migrated.entries} prompt(s) and ${migrated.jobs} render job(s) imported. The old JSON files are left in place as a backup.`)
+      if (migrated && migrated.lessonsSeeded) emitLog('ok', `Migrated ${migrated.lessonsSeeded} render lesson(s) from render-lessons.md to the new auditable lessons table. Review them under Settings → Review.`)
       if (imported.imported.length) emitLog('ok', `First run: imported the Livery Lab brain from ${imported.from} (${imported.imported.join(', ')}). The Lab's own files were not touched.`)
     })
     // Dated DB snapshot into the data folder's backups/ shortly after start, then twice a day.

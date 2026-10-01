@@ -7,14 +7,13 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { getConfig, getRenderLessons, setRenderLessons } from './store'
-import { getEntry, upsertEntries, insertReview, undoLatestReview } from './db'
+import { getConfig, getRenderLessons } from './store'
+import { getEntry, upsertEntries, insertReview, undoLatestReview, insertLesson } from './db'
 import { getJob, updateJob, listJobs, submit } from './render'
 import { notify } from './notify'
 import { SYSTEM, longLimit } from '../shared/prompts'
 import { SCENARIOS } from '../shared/domain'
-import { clampPlaybook } from '../shared/util'
-import { RENDER_LESSONS_SYSTEM, buildRenderLessonMessage, buildFixPromptMessage, reasonLabel } from '../shared/review'
+import { RENDER_LESSONS_SYSTEM, buildRenderLessonMessage, buildFixPromptMessage, parseLessonProposals, reasonLabel } from '../shared/review'
 import type { Entry, JobReview, LogLevel, RenderJob, ReviewVerdict } from '../shared/types'
 
 interface Deps {
@@ -108,19 +107,30 @@ export function undo(jobId: string): RenderJob {
 }
 
 async function learnFromRejection(job: RenderJob, entry: Entry | undefined): Promise<void> {
-  const cfg = getConfig()
-  const budget = cfg.review.lessonsBudget
   const current = getRenderLessons()
   deps.emitLog('step', 'Teaching render lessons from this rejection…')
-  let next = await deps.claude(buildRenderLessonMessage({
+  const raw = await deps.claude(buildRenderLessonMessage({
     current, prompt: job.prompt, instructions: job.instructions, scenario: entry?.scenario || '?',
-    reasons: job.review?.reasons || [], comment: job.review?.comment || '', budget,
-  }), { system: RENDER_LESSONS_SYSTEM.replace('{BUDGET}', String(budget)), label: 'render-lessons' })
-  next = next.trim()
-  if (!next) return
-  if (next.length > budget * 1.25) next = clampPlaybook(next, budget)
-  setRenderLessons(next)
-  deps.emitLog('ok', `Render lessons updated: ${current.length} → ${next.length} chars.`)
+    reasons: job.review?.reasons || [], comment: job.review?.comment || '',
+  }), { system: RENDER_LESSONS_SYSTEM, label: 'render-lessons' })
+  const proposals = parseLessonProposals(raw)
+  if (!proposals.length) {
+    deps.emitLog('info', 'No new render lessons from this rejection (the existing ones already cover it).')
+    return
+  }
+  const ids: number[] = []
+  for (const p of proposals) {
+    ids.push(insertLesson({
+      sourceJobId: job.id,
+      sourceReasons: job.review?.reasons || [],
+      sourceComment: job.review?.comment || '',
+      rule: p.rule,
+      category: p.category,
+      confidence: 'low',
+      status: 'pending',
+    }))
+  }
+  deps.emitLog('ok', `Render lessons: +${proposals.length} candidate rule(s) from this rejection. Approve in Settings → Review to make them active.`)
 }
 
 // --- every take of a prompt rejected ---------------------------------------------

@@ -29,20 +29,22 @@ export const REJECT_REASONS: { id: string; label: string }[] = [
 
 export const reasonLabel = (id: string): string => REJECT_REASONS.find((r) => r.id === id)?.label || id
 
-/** Distils rejected renders into a compact list of prompt-writing rules. {BUDGET} is replaced. */
-export const RENDER_LESSONS_SYSTEM = `You maintain the RENDER LESSONS for an AI video pipeline. Prompts for RC scale-model aircraft clips are written by one model and rendered by Seedance (image/text-to-video). A human reviews every render and rejects the ones that fail.
+/** Per-rejection prompt: extract ONE to THREE concrete rule candidates that, if followed next time,
+ *  would have made the video model render the prompt correctly. Returns a JSON array — main/review.ts
+ *  inserts each item as its own row in render_lessons (auditable, individually approvable). */
+export const RENDER_LESSONS_SYSTEM = `You extract concrete prompt-writing rules from a failed RC scale-model aircraft clip. Prompts are written by one model and rendered by Seedance (image/text-to-video). A human reviews every render and rejects the ones that fail.
 
-Your job: keep a compact list of concrete prompt-writing rules that stop the same render failures from happening again. You receive the current lessons, the exact prompt that was rendered, and why the human rejected the video.
+Your job for THIS one rejection:
+- Diagnose which wording in the prompt most likely caused the failure (ambiguous direction of travel, too many simultaneous actions, a camera move Seedance can't hold, missing scale anchors, missing Negative terms, scale giveaway, etc.).
+- Return 1-3 concrete, reusable rules that, if followed next time, would have prevented this failure.
+- Each rule is one sentence. Specific and actionable. What to write / what to avoid / which Negative terms to add. No vague advice ("be careful", "improve quality").
+- If the existing lessons already cover this perfectly, return an empty array.
+- Group rules by failure type via the "category" field (e.g. "Camera", "Negatives", "Scale", "Movement", "Composition"). "General" if unsure.
 
-How to update:
-- Diagnose which wording in the prompt most likely caused the failure (e.g. ambiguous direction of travel, too many simultaneous actions, a camera move Seedance can't hold, missing scale anchors, missing Negative terms).
-- Turn that into a specific, reusable rule: what to write, what to avoid, which Negative terms to add. No vague advice ("be careful", "improve quality").
-- Merge with existing lessons: strengthen or refine a rule that already covers this instead of adding a duplicate; drop rules that are contradicted.
-- Group lessons under short headings by failure type. Most important first.
-- Stay under {BUDGET} characters in total.
+Output ONLY a JSON array, no markdown, no preamble:
+[{"rule":"<one sentence>","category":"<short heading>"}, ...]`
 
-Output ONLY the full updated lessons (plain text / simple markdown bullets). No preamble.`
-
+/** Build the user message for one rejection — current active lessons, the rejection context, the prompt. */
 export function buildRenderLessonMessage(o: {
   current: string
   prompt: string
@@ -50,10 +52,9 @@ export function buildRenderLessonMessage(o: {
   scenario: string
   reasons: string[]
   comment: string
-  budget: number
 }): string {
   return [
-    `CURRENT RENDER LESSONS (${o.current.length}/${o.budget} chars):`,
+    `ACTIVE RENDER LESSONS (the rules already applied to the prompt below):`,
     o.current.trim() || '(none yet)',
     '',
     `REJECTED RENDER — scenario: ${o.scenario}`,
@@ -64,6 +65,26 @@ export function buildRenderLessonMessage(o: {
     'PROMPT THAT WAS RENDERED:',
     o.prompt,
   ].filter((l) => l !== '').join('\n')
+}
+
+/** Parse Claude's JSON output back into rule rows. Tolerant: handles ```json fences and minor noise. */
+export function parseLessonProposals(raw: string): { rule: string; category: string | null }[] {
+  const text = String(raw || '').trim()
+  if (!text) return []
+  const stripped = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
+  let arr: any
+  try { arr = JSON.parse(stripped) } catch { return [] }
+  if (!Array.isArray(arr)) return []
+  const out: { rule: string; category: string | null }[] = []
+  for (const item of arr) {
+    if (!item || typeof item !== 'object') continue
+    const rule = String(item.rule || '').trim()
+    if (!rule || rule.length > 400) continue
+    const category = item.category ? String(item.category).trim().slice(0, 60) || null : null
+    out.push({ rule, category })
+    if (out.length >= 3) break
+  }
+  return out
 }
 
 /** Appended to the brain's generation message when render lessons are on. */

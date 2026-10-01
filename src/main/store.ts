@@ -5,6 +5,7 @@ import type { AppConfig, Entry, LearningLogEntry, RenderJob, RenderSettings, Rev
 import {
   getDb, migrateFromJson, backupDb, loadEntries, getEntry, upsertEntries, countEntries, clearEntries,
   loadRenderJobs, syncRenderJobs,
+  listActiveLessons, listAllLessons, insertLessonsBulk, approveLesson, dismissLesson, formatLessonsBlock, seedRenderLessonsFromFile, bumpLessonUses, recordLessonMatches, type RenderLessonRow,
 } from './db'
 import { REVIEW_DEFAULTS } from '../shared/review'
 import { REFERENCE_IMAGE1_DEFAULT } from '../shared/references'
@@ -237,9 +238,12 @@ const p = (f: string) => path.join(dataDir(), f)
  * app used before SQLite (from the data folder). Call once at startup, before
  * anything reads history.
  */
-export function initStorage(): { entries: number; jobs: number } | null {
+export function initStorage(): { entries: number; jobs: number; lessonsSeeded: number } | null {
   getDb()
-  return migrateFromJson(dataDir())
+  const dir = dataDir()
+  const lessonsSeeded = seedRenderLessonsFromFile(dir)
+  const migrated = migrateFromJson(dir)
+  return migrated ? { entries: migrated.entries, jobs: migrated.jobs, lessonsSeeded } : { entries: 0, jobs: 0, lessonsSeeded }
 }
 
 /** Snapshot the DB into <data folder>/backups (daily, last 7 kept). */
@@ -381,15 +385,59 @@ export function getLearningLog(): LearningLogEntry[] {
 // --- Trends (current web-research digest, opt-in for generation) ----------------
 
 // --- Render lessons (learned from rejected renders; Livery Studio Phase 2) ------
+// Livery Studio Phase 2+: each lesson is one auditable row in the DB (render_lessons).
+// getRenderLessons() returns the formatted block (used by every generation prompt);
+// individual rules are managed via the Settings UI (approve/dismiss) and the Review
+// UI (per-rule checkbox). The legacy render-lessons.md file is migrated once on
+// startup (seedRenderLessonsFromFile → renamed to .imported-bak) and never read again.
 
-export function getRenderLessons(): string {
-  try { const f = p('render-lessons.md'); return fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '' } catch { return '' }
+export function getRenderLessons(budget?: number): string {
+  try {
+    return formatLessonsBlock(listActiveLessons(), budget).text
+  } catch { return '' }
 }
 
+/** Same as getRenderLessons but exposes which lesson IDs were actually included (for usage tracking). */
+export function getRenderLessonsWithIds(budget?: number): { text: string; ids: number[] } {
+  try {
+    return formatLessonsBlock(listActiveLessons(), budget)
+  } catch { return { text: '', ids: [] } }
+}
+
+/** All lessons the operator can act on (pending + approved + dismissed), newest first. */
+export function getAllRenderLessons(): RenderLessonRow[] {
+  try { return listAllLessons() } catch { return [] }
+}
+
+export function approveRenderLesson(id: number): void { approveLesson(id) }
+export function dismissRenderLesson(id: number, reason: string): void { dismissLesson(id, reason) }
+export function bumpRenderLessonUses(ids: number[]): void { bumpLessonUses(ids) }
+export function recordRenderLessonMatches(ids: number[]): void { recordLessonMatches(ids) }
+
+/** Replace every non-imported lesson with these (used by "Reset all rules"). The Settings UI manages
+ *  individual rows; this is the escape hatch for paste-replace. Pending rows from past sessions are cleared. */
 export function setRenderLessons(text: string): void {
-  const file = p('render-lessons.md')
-  backup(file)
-  fs.writeFileSync(file, text, 'utf8')
+  const d = getDb()
+  d.prepare(`DELETE FROM render_lessons WHERE imported_from IS NULL`).run()
+  const parsed = parseLessonsMarkdownText(text)
+  if (!parsed.length) return
+  insertLessonsBulk(parsed.map((r: { rule: string; category: string | null }) => ({ ...r, createdAt: new Date().toISOString(), importedFrom: null })))
+}
+
+/** Mirror of parseLessonsMarkdown — kept here so the Settings "paste-replace" path doesn't pull db.ts internals. */
+function parseLessonsMarkdownText(text: string): { rule: string; category: string | null }[] {
+  const out: { rule: string; category: string | null }[] = []
+  let cat: string | null = null
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim()
+    if (!line) continue
+    const h = line.match(/^#{1,3}\s+(.+)$/)
+    if (h) { cat = h[1].trim(); continue }
+    const b = line.match(/^[-*+]\s+(.+)$/)
+    if (b) { out.push({ rule: b[1].trim(), category: cat }); continue }
+    out.push({ rule: line, category: cat || 'General' })
+  }
+  return out
 }
 
 export function getTrends(): { text: string; updatedAt: string } {
