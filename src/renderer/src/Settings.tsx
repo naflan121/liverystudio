@@ -427,9 +427,10 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
                 ['scene', 'Coverage notes (aircraft + setting)'],
                 ['refAircraft', 'Reference images — naming the aircraft'],
                 ['dolaCheck', 'Renders → Check (reading Dola replies)'],
+                ['brainAgent', 'Brain agent (audit + consolidate + missed combos)'],
               ] as const).map(([k, label]) => (
                 <Field key={k} label={label}>
-                  <select value={c.ai.routes[k]} onChange={(e) => setAi('routes', { [k]: e.target.value })} style={sel}>
+                  <select value={c.ai.routes[k] || 'claude:claude-haiku-4-5'} onChange={(e) => setAi('routes', { [k]: e.target.value })} style={sel}>
                     {!engineOptions.some((o) => o.value === c.ai.routes[k]) && <option value={c.ai.routes[k]}>{c.ai.routes[k]}</option>}
                     {engineOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>

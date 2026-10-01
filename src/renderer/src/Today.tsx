@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { DISPLAY, MONO, INK, MUTE, LINE, SURFACE, ACCENT, INFO, GOOD, BAD, WARN, ghostBtn } from './ui'
 import { PageHeader, type View } from './Shell'
 import { RENDER_META } from './Renders'
@@ -74,6 +74,17 @@ export function Today({ entries, jobs, overview, onNav, onOpenEntry, onLineup }:
   const toScore = entries.filter((e) => e.status === 'posted')
   const failedToday = jobs.filter((j) => j.status === 'failed' && isToday(j.endedAt)).length
   const insights = useMemo(() => topInsights(entries), [entries])
+  // Brain agent digest (Phase 2+): manual trigger + live updates from the reactive/periodic runs.
+  const [digest, setDigest] = useState<any | null>(null)
+  const [digestBusy, setDigestBusy] = useState(false)
+  const [digestErr, setDigestErr] = useState('')
+  useEffect(() => window.api.onBrainDigest((d) => setDigest(d)), [])
+  async function runBrainAgent(apply: boolean) {
+    setDigestBusy(true); setDigestErr('')
+    try { const d = await window.api.brainDigest({ apply }); setDigest(d) }
+    catch (e: any) { setDigestErr(String(e?.message || e)) }
+    finally { setDigestBusy(false) }
+  }
   const cap = overview?.dailyCap ?? 0
   const sent = overview?.sentToday ?? 0
 
@@ -155,6 +166,50 @@ export function Today({ entries, jobs, overview, onNav, onOpenEntry, onLineup }:
             <div style={{ fontSize: 12, color: WARN, paddingTop: 4 }}>
               {toScore.length} posted clip{toScore.length === 1 ? '' : 's'} not scored yet — scoring is what keeps the playbook learning.
               {' '}<button onClick={() => onOpenEntry(toScore[0])} style={{ ...small, marginLeft: 4 }}>Score “{snippet(toScore[0].title || toScore[0].text).slice(0, 28)}…”</button>
+            </div>
+          )}
+        </Section>
+
+        <Section title="Brain agent" action={
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button disabled={digestBusy} onClick={() => runBrainAgent(false)} style={small}>{digestBusy ? 'Thinking…' : '🧠 Run digest'}</button>
+            {digest?.newLessons?.length ? <button disabled={digestBusy} onClick={() => runBrainAgent(true)} title="Insert these as new pending rules. Approve in Settings → Review to make them active." style={{ ...small, color: GOOD }}>Apply {digest.newLessons.length}</button> : null}
+          </div>
+        }>
+          {digestErr && <div style={{ fontSize: 12, color: BAD, padding: '6px 2px' }}>{digestErr}</div>}
+          {!digest && <Empty>The brain agent audits lessons, clusters failures and finds missed combos. Hit <strong>Run digest</strong> any time — it runs in the background on MiniMax and never fights your active work. Auto-fires every few days if you don't touch it.</Empty>}
+          {digest && (
+            <div style={{ display: 'grid', gap: 8, padding: '6px 2px' }}>
+              <div style={{ fontSize: 12, color: MUTE }}>Last digest: <strong>{digest.source || 'manual'}</strong> · {digest.summary}</div>
+              {digest.newLessons?.length > 0 && (
+                <div style={{ borderTop: `1px solid ${LINE}`, paddingTop: 6 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 4 }}>New rule proposals ({digest.newLessons.length})</div>
+                  {digest.newLessons.slice(0, 4).map((p: any, i: number) => (
+                    <div key={i} style={{ fontSize: 12.5, padding: '4px 0', lineHeight: 1.5 }}>· {p.rule}{p.category ? <span style={{ color: MUTE }}> ({p.category})</span> : null}</div>
+                  ))}
+                </div>
+              )}
+              {digest.clusters?.length > 0 && (
+                <div style={{ borderTop: `1px solid ${LINE}`, paddingTop: 6 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 4 }}>Failure clusters ({digest.clusters.length})</div>
+                  {digest.clusters.slice(0, 3).map((c: any, i: number) => (
+                    <div key={i} style={{ fontSize: 12.5, padding: '4px 0', lineHeight: 1.5 }}>· <strong>{c.scenarioId || '?'}</strong> · {c.reason} · {c.momentBucket} · {c.count}× — {c.proposedRule}</div>
+                  ))}
+                </div>
+              )}
+              {digest.missedCombos?.length > 0 && (
+                <div style={{ borderTop: `1px solid ${LINE}`, paddingTop: 6 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 4 }}>Untried winning combos</div>
+                  {digest.missedCombos.slice(0, 3).map((m: any, i: number) => (
+                    <div key={i} style={{ fontSize: 12.5, padding: '4px 0', lineHeight: 1.5 }}>· {m.rationale}</div>
+                  ))}
+                </div>
+              )}
+              {digest.health && (
+                <div style={{ borderTop: `1px solid ${LINE}`, paddingTop: 6, fontSize: 11.5, color: MUTE }}>
+                  Health: {digest.health.activeCount} active · {digest.health.pendingCount} pending · {digest.health.staleCandidates?.length ? `${digest.health.staleCandidates.length} stale candidate(s) to dismiss` : 'no stale rules'}
+                </div>
+              )}
             </div>
           )}
         </Section>
