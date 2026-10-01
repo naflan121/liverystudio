@@ -90,6 +90,10 @@ const api = {
   reviewStats: (): Promise<{ scenarios: { scenario: string; approved: number; rejected: number }[]; reasons: { reason: string; n: number }[] }> => ipcRenderer.invoke('review:stats'),
   getRenderLessons: (): Promise<string> => ipcRenderer.invoke('review:lessons:get'),
   setRenderLessons: (text: string): Promise<boolean> => ipcRenderer.invoke('review:lessons:set', text),
+  listRenderLessons: (): Promise<any[]> => ipcRenderer.invoke('review:lessons:list'),
+  approveRenderLesson: (id: number): Promise<boolean> => ipcRenderer.invoke('review:lessons:approve', id),
+  dismissRenderLesson: (id: number, reason: string): Promise<boolean> => ipcRenderer.invoke('review:lessons:dismiss', { id, reason }),
+  previewRenderLessons: (): Promise<string> => ipcRenderer.invoke('review:lessons:preview'),
   /** Main changed history on its own (e.g. a rewritten prompt) — reload it. */
   onHistoryChanged: (cb: () => void): (() => void) => {
     const handler = (): void => cb()

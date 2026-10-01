@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { INK, PAPER, LINE, MUTE, ACCENT, GOOD, BAD, SCREEN, SCREEN_TX, lbl, sel, ghostBtn, eyebrow, pageTitle } from './ui'
 import { AIRCRAFT, CAMERA, CROWD, ENV, groupScenarios } from '@shared/domain'
 import { trendMasterPrompt } from '@shared/prompts'
@@ -239,6 +239,21 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
     await window.api.setRenderLessons(lessons)
     setLessonsMsg('Saved')
     setTimeout(() => setLessonsMsg(''), 1800)
+  }
+  // Lesson queue (Phase 2+): each rule is one auditable row in DB; operator approves/dismisses.
+  const [lessonRows, setLessonRows] = useState<any[]>([])
+  const [lessonFilter, setLessonFilter] = useState<'pending' | 'approved' | 'dismissed' | 'all'>('pending')
+  const [dismissId, setDismissId] = useState<number | null>(null)
+  const [dismissReason, setDismissReason] = useState('')
+  const [showPaste, setShowPaste] = useState(false)
+  const reloadLessons = useCallback(() => {
+    window.api.listRenderLessons().then(setLessonRows).catch(() => { /* ignore */ })
+    window.api.getRenderLessons().then(setLessons).catch(() => { /* ignore */ })
+  }, [])
+  useEffect(() => { reloadLessons() }, [reloadLessons])
+  async function approveRow(id: number) { await window.api.approveRenderLesson(id); reloadLessons() }
+  async function dismissRow(id: number, reason: string) {
+    await window.api.dismissRenderLesson(id, reason); setDismissId(null); setDismissReason(''); reloadLessons()
   }
   const [excludeDraft, setExcludeDraft] = useState((config.render?.excludeInstances || []).join(', '))
   const [labDir, setLabDir] = useState('')
@@ -785,15 +800,71 @@ export function Settings({ mode = 'settings', config, onSave, onClose, playbook,
 
           {isBrain && (
           <Card title="Render lessons · learned from rejected renders" id="b-lessons">
-            <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>Rules the engine learned from your rejections. They ride along on every new prompt while "Use render lessons" is on (Settings → Review). Edit freely.</div>
-            <Field label="Render lessons (editable — what gets added to new prompts)">
-              <textarea value={lessons} onChange={(e) => setLessons(e.target.value)} rows={7} placeholder="Empty until you reject a render with learning on." style={{ width: '100%', padding: '10px 12px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 12.5, boxSizing: 'border-box', resize: 'vertical', fontFamily: 'var(--f-mono)', color: INK }} />
-            </Field>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <button onClick={saveLessons} style={ghostBtn}>Save lessons</button>
-              <span style={{ fontSize: 12, color: MUTE }}>{lessons.length} / {c.review.lessonsBudget} chars</span>
-              {lessonsMsg && <span style={{ fontSize: 12.5, color: GOOD }}>{lessonsMsg}</span>}
-            </div>
+            <div style={{ fontSize: 12.5, color: MUTE, lineHeight: 1.6 }}>Each rule below was extracted from a rejection (Phase 2+). Rules ride along on every new prompt while "Use render lessons" is on (Settings → Review). Approve the rules that make sense; dismiss the ones that don't — they won't go into prompts until you approve or they get confirmed by the rejection flow twice.</div>
+            {(() => {
+              const counts = { pending: 0, approved: 0, dismissed: 0 }
+              for (const r of lessonRows) (counts as any)[r.status]++
+              const filtered = lessonRows.filter((r) => lessonFilter === 'all' ? true : r.status === lessonFilter)
+              return (
+                <div style={{ display: 'grid', gap: 12 }}>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                    {(['pending', 'approved', 'dismissed', 'all'] as const).map((f) => (
+                      <button key={f} onClick={() => setLessonFilter(f)} style={{ ...ghostBtn, padding: '5px 11px', fontSize: 12.5, background: lessonFilter === f ? INK : 'var(--surface)', borderColor: lessonFilter === f ? INK : LINE, color: lessonFilter === f ? 'var(--on-ink)' : INK }}>{f} · {(counts as any)[f]}</button>
+                    ))}
+                    <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                      <button onClick={() => setShowPaste((s) => !s)} style={ghostBtn}>{showPaste ? 'Hide paste-replace' : 'Paste-replace…'}</button>
+                    </span>
+                  </div>
+                  {showPaste && (
+ <div style={{ border: `1px dashed ${LINE}`, borderRadius: 9, padding: 12, background: 'var(--surface-2)', display: 'grid', gap: 8 }}>
+ <div style={{ fontSize: 12, color: MUTE, lineHeight: 1.5 }}>Drops every existing rule (kept-imported ones too) and replaces with the markdown you paste. Use only when you want a clean slate.</div>
+ <textarea value={lessons} onChange={(e) => setLessons(e.target.value)} rows={5} placeholder="# Camera\n- rule…" style={{ width: '100%', padding: '8px 10px', border: `1px solid ${LINE}`, borderRadius: 9, fontSize: 12.5, boxSizing: 'border-box', resize: 'vertical', fontFamily: 'var(--f-mono)', color: INK }} />
+ <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+ <button onClick={saveLessons} style={ghostBtn}>Save (replaces all)</button>
+ {lessonsMsg && <span style={{ fontSize: 12.5, color: GOOD }}>{lessonsMsg}</span>}
+ </div>
+ </div>
+                  )}
+                  {filtered.length === 0 && <div style={{ fontSize: 12.5, color: MUTE, padding: '8px 0' }}>{lessonFilter === 'pending' ? 'No pending rules. Reject a render with learning on (Settings → Review) to start the queue.' : 'Nothing here.'}</div>}
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    {filtered.map((r) => {
+                      const confColor = r.confidence === 'high' ? GOOD : r.confidence === 'medium' ? ACCENT : MUTE
+                      const confLabel = r.confidence === 'high' ? '✓ high' : r.confidence === 'medium' ? '~ medium' : '· low'
+                      return (
+                        <div key={r.id} style={{ border: `1px solid ${LINE}`, borderRadius: 10, padding: '10px 12px', background: r.status === 'approved' ? 'var(--good-soft)' : r.status === 'dismissed' ? 'var(--surface-2)' : 'var(--surface)', display: 'grid', gap: 6, opacity: r.status === 'dismissed' ? 0.65 : 1 }}>
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 13.5, color: INK, lineHeight: 1.5 }}>{r.rule}</div>
+                              <div style={{ fontSize: 11.5, color: MUTE, marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                                {r.category && <span>{r.category}</span>}
+                                <span style={{ color: confColor, fontWeight: 600 }}>{confLabel}</span>
+                                <span>uses {r.uses}</span>
+                                <span>matched {r.matchedUses}×</span>
+                                {r.importedFrom && <span>imported</span>}
+                                <span>{new Date(r.createdAt).toLocaleDateString()}</span>
+                                {r.sourceReasons?.length ? <span title="From rejection">reasons: {r.sourceReasons.join(', ')}</span> : null}
+                                {r.dismissReason ? <span title="Why dismissed">dismissed: {r.dismissReason}</span> : null}
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                              {r.status !== 'approved' && <button onClick={() => approveRow(r.id)} style={{ ...ghostBtn, color: GOOD, padding: '5px 10px', fontSize: 12 }}>Approve</button>}
+                              {r.status !== 'dismissed' && dismissId !== r.id && <button onClick={() => { setDismissId(r.id); setDismissReason('') }} style={{ ...ghostBtn, color: BAD, padding: '5px 10px', fontSize: 12 }}>Dismiss</button>}
+                            </div>
+                          </div>
+                          {dismissId === r.id && (
+                            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                              <input autoFocus value={dismissReason} onChange={(e) => setDismissReason(e.target.value)} placeholder="Why? (≥5 chars)" style={{ flex: 1, padding: '6px 9px', border: `1px solid ${LINE}`, borderRadius: 8, fontSize: 12.5, color: INK }} />
+                              <button disabled={dismissReason.trim().length < 5} onClick={() => dismissRow(r.id, dismissReason)} style={{ ...ghostBtn, color: BAD, padding: '5px 10px', fontSize: 12, opacity: dismissReason.trim().length < 5 ? 0.5 : 1 }}>Confirm dismiss</button>
+                              <button onClick={() => { setDismissId(null); setDismissReason('') }} style={{ ...ghostBtn, padding: '5px 10px', fontSize: 12 }}>Cancel</button>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })()}
           </Card>
           )}
 

@@ -11,7 +11,7 @@ import {
   getPlaybookVersions, appendLearningLog, getLearningLog, resetMemory, dataDir, setDataDir,
   getTrends, setTrends, getSavedConcepts, DEFAULT_CONFIG, setSavedConcepts, importFromLiveryLab, liveryLabDataDir, pullNewFromLab, initStorage, backupStorage, getRenderLessons, setRenderLessons, getRenderLessonsWithIds, getAllRenderLessons, approveRenderLesson, dismissRenderLesson, bumpRenderLessonUses, recordRenderLessonMatches,
 } from './store'
-import { closeDb, reviewStatsByScenario, rejectReasonCounts, getEntry as getEntryById, insertUsage, usageSummary, precheckAgreement } from './db'
+import { closeDb, reviewStatsByScenario, rejectReasonCounts, getEntry as getEntryById, insertUsage, usageSummary, precheckAgreement, formatLessonsBlock } from './db'
 import { initReview, decide as reviewDecide, undo as reviewUndo, rewriteAndRender, rerender, markUnusable } from './review'
 import { varietyNote } from '../shared/variety'
 import { DOLA_CHECK_SYSTEM, dolaCheckMsg, parseDolaCheck, type RenderCheckResult } from '../shared/renderCheck'
@@ -648,6 +648,14 @@ function registerIpc(): void {
   ipcMain.handle('review:stats', () => ({ scenarios: reviewStatsByScenario(), reasons: rejectReasonCounts() }))
   ipcMain.handle('review:lessons:get', () => getRenderLessons())
   ipcMain.handle('review:lessons:set', (_e, text: string) => { setRenderLessons(text); return true })
+  ipcMain.handle('review:lessons:list', () => getAllRenderLessons())
+  ipcMain.handle('review:lessons:approve', (_e, id: number) => { approveRenderLesson(id); return true })
+  ipcMain.handle('review:lessons:dismiss', (_e, p: { id: number; reason: string }) => { dismissRenderLesson(p.id, p.reason); return true })
+  ipcMain.handle('review:lessons:preview', () => {
+    const cfg = getConfig()
+    const rows = getAllRenderLessons().filter((r) => r.status === 'approved' || r.confidence !== 'low' || r.matchedUses >= 2)
+    return formatLessonsBlock(rows, cfg.review.lessonsBudget).text
+  })
   ipcMain.handle('history:refresh', () => {
     const r = pullNewFromLab()
     emitLog(r.added ? 'ok' : 'info', r.added ? `Pulled ${r.added} new prompt(s) from Livery Lab.` : 'History refreshed — no new prompts in Livery Lab.')
