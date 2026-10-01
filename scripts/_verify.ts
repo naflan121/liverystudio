@@ -26,6 +26,11 @@ check('truncated salvages first complete value', extractJson('[{"a":1},{"b":'), 
 check('example echo loses to real answer', extractJson('Example: [{"rule":"EXAMPLE"}]\nNow yours:\n[{"rule":"REAL"}]'), [{ rule: 'REAL' }])
 check('echo then fenced', extractJson('Here is an example [{"a":1}]\n```json\n[{"a":2}]\n```'), [{ a: 2 }])
 check('no infinite loop on unterminated string', extractJson('[{"a":"unterminated'), null)
+// Both callers expect a list, so a trailing empty object in prose must not win.
+check('trailing prose object loses to the real array', extractJson('[{"rule":"REAL"}] hope { }'), [{ rule: 'REAL' }])
+check('single object still returned for object-shaped callers', extractJson('{"proposals":[]}'), { proposals: [] })
+// A malformed array must not hide a valid one that follows it.
+check('malformed array skipped, valid one used', extractJson('[{"a":1},] your answer: [{"b":2}]'), [{ b: 2 }])
 
 // --- parseLessonProposals (S9: preamble must not wipe the learning step) ---
 check('plain', parseLessonProposals('[{"rule":"a","category":"Camera"}]'), [{ rule: 'a', category: 'Camera' }])
@@ -105,8 +110,9 @@ check('same-chain nesting never settles (B1 root cause)', settled, false)
 // ones, because a long list of approved rules must never hide the rule that needs ticking.
 function selectReviewRules(rows: { id: number; status: string; confidence: string; uses: number }[]) {
   const rank = (r: any): number => (r.status === 'approved' ? 3 : r.confidence === 'medium' || r.confidence === 'high' ? 2 : 1)
-  const active = rows.filter((r) => rank(r) >= 2).sort((a, b) => rank(b) - rank(a) || b.uses - a.uses || b.id - a.id)
-  const fresh = rows.filter((r) => rank(r) === 1).sort((a, b) => b.id - a.id)
+  const live = rows.filter((r) => r.status === 'approved' || r.status === 'pending')
+  const active = live.filter((r) => rank(r) >= 2).sort((a, b) => rank(b) - rank(a) || b.uses - a.uses || b.id - a.id)
+  const fresh = live.filter((r) => rank(r) === 1).sort((a, b) => b.id - a.id)
   return [...active.slice(0, 9), ...fresh.slice(0, 3)].map((r) => r.id)
 }
 const manyApproved = Array.from({ length: 14 }, (_, i) => ({ id: i + 1, status: 'approved', confidence: 'high', uses: 0 }))
@@ -116,6 +122,7 @@ check('fresh rules come newest-first', selectReviewRules([{ id: 50, status: 'pen
 check('list stays within the 12 cap', selectReviewRules([...manyApproved, brandNew]).length <= 12, true)
 check('caps each tier independently', selectReviewRules(Array.from({ length: 14 }, (_, i) => ({ id: i + 1, status: 'pending', confidence: 'low', uses: 0 }))).length, 3)
 check('empty input is safe', selectReviewRules([]), [])
+check('dismissed rules are excluded', selectReviewRules([{ id: 7, status: 'dismissed', confidence: 'high', uses: 9 }]).includes(7), false)
 
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

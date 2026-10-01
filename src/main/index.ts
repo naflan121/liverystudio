@@ -12,7 +12,7 @@ import {
   getTrends, setTrends, getSavedConcepts, DEFAULT_CONFIG, setSavedConcepts, importFromLiveryLab, liveryLabDataDir, pullNewFromLab, initStorage, backupStorage, getRenderLessons, setRenderLessons, getRenderLessonsWithIds, getAllRenderLessons, editRenderLessons, approveRenderLesson, dismissRenderLesson, bumpRenderLessonUses,
 } from './store'
 import { closeDb, reviewStatsByScenario, rejectReasonCounts, getEntry as getEntryById, insertUsage, usageSummary, precheckAgreement, formatLessonsBlock, recentRejectionsWithMoment, insertLesson, getMeta, setMeta, listActiveLessons } from './db'
-import { runBrainDigest, type BrainDigest, type LessonProposal } from './brainAgent'
+import { runBrainDigest, type BrainDigest } from './brainAgent'
 import { initReview, decide as reviewDecide, undo as reviewUndo, rewriteAndRender, rerender, markUnusable } from './review'
 import { varietyNote } from '../shared/variety'
 import { DOLA_CHECK_SYSTEM, dolaCheckMsg, parseDolaCheck, type RenderCheckResult } from '../shared/renderCheck'
@@ -179,7 +179,9 @@ function onRejectionRecorded(): void {
 function installBrainPeriodic(): void {
   if (brainPeriodicHandle) { clearInterval(brainPeriodicHandle); brainPeriodicHandle = null }
   const cfg = getConfig()
-  if (!cfg.ai.brainAgent?.autoPeriodic) return
+  // Both gates, mirroring the startup digest: no timer at all when the user has switched the
+  // agent off, or when the engine it needs isn't available.
+  if (!cfg.ai.brainAgent?.autoPeriodic || !cfg.ai.minimax.enabled) return
   const cadenceH = Math.max(6, cfg.ai.brainAgent.cadenceHours)
   brainPeriodicHandle = setInterval(() => {
     const c = getConfig()

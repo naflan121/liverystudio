@@ -103,7 +103,11 @@ export function extractJson(raw: string): any | null {
     // Skip past the whole value so values nested inside it aren't re-parsed as candidates.
     i = end + 1
   }
-  return found.length ? found[found.length - 1] : null
+  if (!found.length) return null
+  // Prefer the last array: both callers expect a list, and trailing prose ("hope { }")
+  // would otherwise win on a last-value-wins rule and silently drop the whole step.
+  for (let k = found.length - 1; k >= 0; k--) if (Array.isArray(found[k])) return found[k]
+  return found[found.length - 1]
 }
 
 /** Parse Claude's JSON output back into rule rows. Tolerates preambles, fences and truncation. */
